@@ -7,7 +7,7 @@ import type { RegistrySnapshot } from "./schema.js";
 
 const fields = ["name", "description", "protocol", "tags", "capabilities", "connection", "enabled"] as const;
 type DiffStatus = "added" | "changed" | "unchanged" | "retained";
-interface DiffEntry {
+export interface DiffEntry {
   id: string;
   status: DiffStatus;
   fields: (typeof fields)[number][];

@@ -58,6 +58,10 @@ try {
   for (const required of ["dist/onboarding/local-import.js", "dist/onboarding/local-sources.js", "dist/onboarding/local-a2a.js", "docs/local-import.md"]) {
     assert.ok(files.has(required), "Local client import artifact is missing: " + required);
   }
+  for (const required of ["dist/onboarding/import-profiles.js", "dist/onboarding/import-select.js", "dist/onboarding/import-sync.js",
+    "dist/onboarding/import-follow-up.js", "dist/onboarding/import-workflow.js", "dist/registry/duplicates.js", "dist/stdio-inspect.js", "docs/import-management.md"]) {
+    assert.ok(files.has(required), "Import-management artifact is missing: " + required);
+  }
   assert.equal([...files].some((file) => /^(src|test|node_modules|\.github)\//u.test(file) || /(^|\/)\.env(?:\.|$)|\.sqlite(?:$|-)/u.test(file)), false);
 
   // 2. Install production dependencies in isolation from the repository's development dependencies.
@@ -170,7 +174,8 @@ try {
   const localHome = join(directory, "foreign home");
   const localProject = join(directory, "foreign project");
   await mkdir(join(localProject, ".gemini", "agents"), { recursive: true });
-  await writeFile(join(localProject, ".mcp.json"), JSON.stringify({ mcpServers: { files: { command: process.execPath } } }));
+  const foreignCommand = { command: process.execPath, args: [join(installed, "examples", "demo-targets.mjs"), "--stdio"] };
+  await writeFile(join(localProject, ".mcp.json"), JSON.stringify({ mcpServers: { files: foreignCommand } }));
   await writeFile(join(localProject, ".gemini", "agents", "peer.md"), "---\nkind: remote\nname: peer\nagent_card_json: |\n  "
     + JSON.stringify({ name: "Peer", description: "Packaged inline card", url: "https://peer.example/tasks", protocolVersion: "0.3.0",
       preferredTransport: "JSONRPC", skills: [{ id: "research", description: "Research" }] }) + "\n---\n");
@@ -188,6 +193,44 @@ try {
     assert.equal(JSON.parse(saved.stdout).protocol, target.protocol);
     await runCommand(executable, [...prefix, "target", "remove", target.id], { cwd: installation, env: environment });
   }
+  // Exercise the complete managed flow against private source/profile files; only local stdio metadata is inspected.
+  const profilesFile = join(directory, "import profiles.json");
+  const managedImport = await runCommand(executable, [...localImportArgs, "--select", "claude-code-project/files",
+    "--save-profile", "fixture", "--profiles-file", profilesFile, "--apply", "--refresh", "--diagnose", "--inspect-stdio"],
+    { cwd: installation, env: environment });
+  const managedResult = JSON.parse(managedImport.stdout);
+  assert.equal(managedResult.profileSaved, true);
+  assert.equal(managedResult.followUp.failed, false);
+  assert.ok(managedResult.followUp.outcomes[0].capabilities.names.includes("echo"));
+  assert.ok(!(await readFile(profilesFile, "utf8")).includes(credentials.adminToken));
+  const managedId = managedResult.targets[0].id;
+  await writeFile(join(localProject, ".mcp.json"), JSON.stringify({ mcpServers: { files: { ...foreignCommand, disabled: true } } }));
+  const syncArgs = [...prefix, "registry", "sync-local", "--profile", "fixture", "--profiles-file", profilesFile];
+  const syncPreview = await runCommand(executable, syncArgs, { cwd: installation, env: environment });
+  assert.equal(JSON.parse(syncPreview.stdout).plan.counts.updated, 1);
+  assert.equal(JSON.parse(syncPreview.stdout).applied, false);
+  const synced = await runCommand(executable, [...syncArgs, "--apply"], { cwd: installation, env: environment });
+  assert.equal(JSON.parse(synced.stdout).failed, false);
+  const syncedTarget = await runCommand(executable, [...prefix, "target", "get", managedId], { cwd: installation, env: environment });
+  assert.equal(JSON.parse(syncedTarget.stdout).enabled, false);
+  assert.ok(JSON.parse(syncedTarget.stdout).capabilities.some((capability) => capability.name === "echo"));
+  await writeFile(join(localProject, ".mcp.json"), JSON.stringify({ mcpServers: {} }));
+  const pruned = await runCommand(executable, [...syncArgs, "--prune", "--apply"], { cwd: installation, env: environment });
+  assert.equal(JSON.parse(pruned.stdout).plan.counts.removed, 1);
+  const profileRemoved = await runCommand(executable, [...prefix, "import-profile", "remove", "fixture", "--profiles-file", profilesFile, "--apply"],
+    { cwd: installation, env: environment });
+  assert.equal(JSON.parse(profileRemoved.stdout).registryChanged, false);
+
+  const duplicateDefinition = join(directory, "duplicate.json");
+  for (const id of ["package-keep", "package-remove"]) {
+    await writeFile(duplicateDefinition, JSON.stringify({ id, name: id, description: "Packaged duplicate cleanup fixture", protocol: "mcp",
+      connection: { transport: "stdio", command: process.execPath }, capabilities: [] }));
+    await runCommand(executable, [...prefix, "target", "add", duplicateDefinition], { cwd: installation, env: environment });
+  }
+  const cleaned = await runCommand(executable, [...prefix, "registry", "duplicates", "--keep", "package-keep", "--remove", "package-remove", "--apply"],
+    { cwd: installation, env: environment });
+  assert.equal(JSON.parse(cleaned.stdout).outcomes[0].status, "removed");
+  await runCommand(executable, [...prefix, "target", "remove", "package-keep"], { cwd: installation, env: environment });
   const imported = await runCommand(executable, [...prefix, "registry", "import-config", clientSource, "--apply"], { cwd: installation, env: environment });
   assert.equal(JSON.parse(imported.stdout).applied, true);
   assert.equal(await readFile(clientSource, "utf8"), sourceContents);
@@ -309,7 +352,9 @@ try {
   assert.ok(demoResult.executions.some((entry) => entry.transport === "stdio"));
   assert.equal(demoResult.remainingTargets.length, 2);
   console.log(JSON.stringify({ package: manifest.filename, isolatedProductionInstall: true,
-    installedBinary: true, runtimeIdentity: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, localClientImport: true, presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
+    installedBinary: true, runtimeIdentity: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, localClientImport: true,
+    importProfiles: true, sourceSynchronization: true, importFollowUp: true, stdioMetadata: true, duplicateCleanup: true,
+    presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
 } finally {
   // 7. Clean up only the processes and temporary files created by this run.
   try {

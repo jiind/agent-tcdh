@@ -189,4 +189,8 @@ Version `0.1.4` supports `target refresh --all` previews and explicit `--apply` 
 
 ## Bring existing connections from other AI clients
 
-Source checkouts add `registry import-local` to locate existing client settings, show origins/duplicates, and select connections for atomic registration. It supports MCP declarations and Gemini remote A2A definitions. See [local client import](local-import.md); published `0.1.4` does not include this command.
+Version `0.1.5` adds `registry import-local` to locate existing client settings, show origins/duplicates, and select connections for atomic registration. It supports MCP declarations and Gemini remote A2A definitions. See [local client import](local-import.md); version `0.1.4` does not include this command.
+
+## Maintain imported connections
+
+The `0.1.5` [import-management bundle](import-management.md) adds terminal selection, private reusable import profiles, tracked synchronization, metadata follow-up, duplicate cleanup, and explicit stdio inspection. Use that guide for the complete workflow and [release notes](releases/v0.1.5.md) for artifact availability; version `0.1.4` does not contain these additions.

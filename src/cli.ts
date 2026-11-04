@@ -42,8 +42,15 @@ Usage:
   agent-tcdh target list [--q QUERY] [--protocol mcp|a2a] [--tag TAG]
                        [--limit COUNT] [--offset OFFSET] [--include-disabled] [--hub URL]
   agent-tcdh target remove <ID> [--dry-run] [--if-match ETAG] [--hub URL]
+  agent-tcdh import-profile list|show|remove [NAME] [--profiles-file FILE] [--apply]
+  agent-tcdh registry sync-local --profile NAME [--profiles-file FILE] [--prune] [--apply]
+                       [--refresh] [--diagnose] [--inspect-stdio] [--fetch-a2a-cards]
+  agent-tcdh registry duplicates [--limit COUNT] [--keep ID --remove ID ...] [--apply]
+  agent-tcdh target inspect-stdio <ID> [--apply] [--stdio-cwd DIR]
   agent-tcdh registry import-local [--client CLIENT ...] [--scope all|user|project] [--project DIR] [--home DIR]
-                       [--select KEY ...] [--prefix PREFIX] [--fetch-a2a-cards] [--apply | --compare]
+                       [--select KEY ... | --interactive] [--profile NAME | --save-profile NAME]
+                       [--prefix PREFIX] [--fetch-a2a-cards] [--apply | --compare]
+                       [--refresh] [--diagnose] [--inspect-stdio] [--stdio-cwd DIR]
   agent-tcdh registry import-config <FILE> [--format FORMAT] [--select NAME ...] [--prefix PREFIX] [--apply | --compare] [--details]
   agent-tcdh preset list
   agent-tcdh preset show <NAME> [--select ID ...] [--compare] [--details]
@@ -70,13 +77,24 @@ Options:
   --compare             Compare a config/preset preview with current hub metadata (read-only)
   --details             Include full definitions and print JSON comparison output
   --apply               Apply an import, batch refresh, disconnection, or config restore; previews are the default
+  --interactive         Choose local connections with terminal checkboxes; no entries are preselected
+  --profile NAME        Reuse a private import profile and its recorded hub
+  --save-profile NAME   Save source locations/selectors and track any successful initial import
+  --profiles-file FILE  Select private import-profile storage
+  --prune               Include unchanged source removals in a sync plan; --apply performs them
+  --refresh             Refresh metadata after an applied local import/synchronization
+  --diagnose            Diagnose metadata after an applied local import/synchronization
+  --inspect-stdio       Explicitly authorize local stdio process startup for metadata collection
+  --stdio-cwd DIR       Working directory for explicitly authorized stdio metadata processes
+  --keep ID             Preserve this representative during duplicate cleanup
+  --remove ID           Select a duplicate to remove; repeat for an explicit group
   --client CLIENT       Limit local import to named clients; repeat to choose several
   --scope SCOPE         Local import sources: all (default), user, or project
   --project DIR         Inspect this exact project directory (default: current directory)
   --home DIR            Inspect this user home instead of native defaults and environment path overrides
   --fetch-a2a-cards     Allow up to 10 selected A2A card metadata lookups; no tasks are executed
   --format FORMAT       Client config format: auto, codex, opencode, opencode-v1, mcp-json
-  --select NAME         Repeat for source server names, preset IDs, or explicit doctor/refresh target IDs
+  --select NAME         Repeat for local entry keys, source server names, preset IDs, or doctor/refresh IDs
   --prefix PREFIX       Namespace imported target ids
   --no-config           Ignore setup files for an explicitly configured stdio discovery bridge
   --anonymous           Use anonymous hub access for mcp; never resolve credential variables
@@ -139,6 +157,17 @@ export async function runCli(args: string[]): Promise<void> {
       project: { type: "string" },
       home: { type: "string" },
       "fetch-a2a-cards": { type: "boolean" },
+      interactive: { type: "boolean" },
+      profile: { type: "string" },
+      "save-profile": { type: "string" },
+      "profiles-file": { type: "string" },
+      prune: { type: "boolean" },
+      refresh: { type: "boolean" },
+      diagnose: { type: "boolean" },
+      "inspect-stdio": { type: "boolean" },
+      "stdio-cwd": { type: "string" },
+      keep: { type: "string" },
+      remove: { type: "string", multiple: true },
       select: { type: "string", multiple: true },
       prefix: { type: "string" },
       json: { type: "boolean" },
@@ -264,8 +293,47 @@ export async function runCli(args: string[]): Promise<void> {
       + "\n" + result.instructions);
     return;
   }
-  const config = values["no-config"] ? undefined : await loadConfig(values.config);
-  const hub = values.hub ?? process.env.AGENT_TCDH_URL ?? config?.hub ?? "http://127.0.0.1:3000";
+  if (command === "import-profile") {
+    const action = positionals[1];
+    if (!["list", "show", "remove"].includes(action ?? "")) {
+      throw new Error("Use import-profile list, show NAME, or remove NAME.");
+    }
+    validateArguments(positionals, action === "list" ? 2 : 3, values, ["profiles-file", ...(action === "remove" ? ["apply"] : [])]);
+    if (values.config !== undefined) {
+      throw new Error("Import-profile management does not use hub setup. Select --profiles-file instead.");
+    }
+    const { readImportProfiles, importProfileNameSchema, mutateImportProfiles } = await import("./onboarding/import-profiles.js");
+    const loaded = await readImportProfiles(values["profiles-file"]);
+    if (action === "list") {
+      const profiles = Object.entries(loaded.store.profiles).map(([name, profile]) => ({ name, hub: profile.hub, project: profile.project, managed: profile.bindings.length }));
+      printOnboarding({ path: loaded.path, profiles }, values.json, () => profiles.map((profile) => JSON.stringify(profile.name) + " " + profile.managed + " managed; " + JSON.stringify(profile.hub)).join("\n") || "No saved import profiles.");
+      return;
+    }
+    const name = importProfileNameSchema.parse(positionals[2]);
+    if (!Object.hasOwn(loaded.store.profiles, name)) {
+      throw new Error("Import profile not found.");
+    }
+    if (action === "show") {
+      printJson({ path: loaded.path, name, profile: loaded.store.profiles[name] });
+      return;
+    }
+    if (values.apply) {
+      await mutateImportProfiles(values["profiles-file"], async (store) => {
+        if (!Object.hasOwn(store.profiles, name)) {
+          throw new Error("Import profile changed before removal.");
+        }
+        delete store.profiles[name];
+        return { result: undefined, save: true };
+      });
+    }
+    printOnboarding({ path: loaded.path, name, removed: Boolean(values.apply), registryChanged: false }, values.json,
+      () => JSON.stringify(name) + (values.apply ? " profile removed." : " removal preview; use --apply.") + " Registry registrations are retained.");
+    return;
+  }
+  const boundProfile = command === "registry" && ["import-local", "sync-local"].includes(positionals[1] ?? "") && values.profile
+    ? await (await import("./onboarding/import-profiles.js")).readImportProfile(values.profile, values["profiles-file"]) : undefined;
+  const config = values["no-config"] || boundProfile && values.config === undefined ? undefined : await loadConfig(values.config);
+  const hub = values.hub ?? boundProfile?.hub ?? process.env.AGENT_TCDH_URL ?? config?.hub ?? "http://127.0.0.1:3000";
 
   // 3. Generate consumer settings and run read-only diagnostics before requiring administration credentials.
   if (command === "connect") {
@@ -354,15 +422,17 @@ export async function runCli(args: string[]): Promise<void> {
   const metadataPreview = !values.compare && (command === "target" && ["add", "import"].includes(positionals[1] ?? "") && values["dry-run"]
     || command === "registry" && ["import-config", "import-local"].includes(positionals[1] ?? "") && !values.apply
     || command === "preset" && (positionals[1] !== "import" || !values.apply));
-  const readCommand = command === "registry" && (positionals[1] === "diff" || ["import-config", "import-local"].includes(positionals[1] ?? "") && values.compare)
+  const readCommand = command === "registry" && (["sync-local", "duplicates"].includes(positionals[1] ?? "") && !values.apply || positionals[1] === "diff" || ["import-config", "import-local"].includes(positionals[1] ?? "") && values.compare)
     || command === "preset" && ["show", "import"].includes(positionals[1] ?? "") && values.compare
-    || command === "mcp" || command === "target" && (["list", "get", "check"].includes(positionals[1] ?? "")
+    || command === "mcp" || command === "target" && (positionals[1] === "inspect-stdio" && !values.apply || ["list", "get", "check"].includes(positionals[1] ?? "")
     || positionals[1] === "refresh" && (values.all || values.select !== undefined) && !values.apply
     || ["refresh", "edit", "enable", "disable", "remove"].includes(positionals[1] ?? "") && values["dry-run"]);
-  if (!readCommand && !metadataPreview && !values["token-env"] && config?.readTokenEnv && !config.tokenEnv && !process.env.AGENT_TCDH_TOKEN) {
+  const credentialDefaults = boundProfile ?? config;
+  if (!readCommand && !metadataPreview && !values["token-env"] && credentialDefaults?.readTokenEnv && !credentialDefaults.tokenEnv
+    && (boundProfile !== undefined || !process.env.AGENT_TCDH_TOKEN)) {
     throw new Error("This setup has only read credentials. Select an administrator credential with --token-env for mutations.");
   }
-  const clientTokenEnv = values["token-env"] ?? (metadataPreview ? undefined : readCommand ? config?.readTokenEnv ?? config?.tokenEnv : config?.tokenEnv);
+  const clientTokenEnv = values["token-env"] ?? (metadataPreview ? undefined : readCommand ? credentialDefaults?.readTokenEnv ?? credentialDefaults?.tokenEnv : credentialDefaults?.tokenEnv);
   const client = new HubClient(hub, values.anonymous || metadataPreview && values["token-env"] === undefined ? undefined
     : readClientToken(clientTokenEnv, clientTokenEnv !== undefined));
   if (command === "mcp") {
@@ -403,16 +473,46 @@ export async function runCli(args: string[]): Promise<void> {
       return;
     }
     if (action === "import-local") {
-      validateArguments(positionals, 2, values, ["hub", "client", "scope", "project", "home", "select", "prefix", "fetch-a2a-cards", "apply", "dry-run", "on-conflict", "compare", "details"]);
-      if (values.apply && (values["dry-run"] || values.compare) || values.details && !values.compare) {
-        throw new Error("Choose either --apply or a preview (--compare/--dry-run). --details requires --compare.");
+      validateArguments(positionals, 2, values, ["hub", "client", "scope", "project", "home", "select", "prefix", "fetch-a2a-cards", "apply", "dry-run", "on-conflict", "compare", "details",
+        "interactive", "profile", "save-profile", "profiles-file", "refresh", "diagnose", "inspect-stdio", "stdio-cwd"]);
+      if (values.apply && values["dry-run"]) {
+        throw new Error("Choose --apply or --dry-run, not both.");
       }
-      const { importOptionsSchema } = await import("./registry/schema.js");
-      importOptionsSchema.parse({ onConflict: values["on-conflict"] });
-      const { prepareLocalImport } = await import("./onboarding/local-import.js");
-      const preparation = await prepareLocalImport({ clients: values.client, scope: values.scope, project: values.project,
-        home: values.home, select: values.select, prefix: values.prefix, hub, fetchA2aCards: values["fetch-a2a-cards"] });
-      await finishPreparedImport(preparation, client, Boolean(values.apply), values["on-conflict"], values.json, values.compare, values.details);
+      const { importLocalWorkflow, formatImportWorkflow } = await import("./onboarding/import-workflow.js");
+      const report = await importLocalWorkflow(client, hub, { clients: values.client, scope: values.scope, project: values.project,
+        home: values.home, select: values.select, prefix: values.prefix, fetchA2aCards: values["fetch-a2a-cards"],
+        interactive: values.interactive, profile: values.profile, saveProfile: values["save-profile"], profilesFile: values["profiles-file"],
+        apply: values.apply, compare: values.compare, details: values.details, onConflict: values["on-conflict"],
+        tokenEnv: values["token-env"] ?? credentialDefaults?.tokenEnv, readTokenEnv: credentialDefaults?.readTokenEnv,
+        refresh: values.refresh, diagnose: values.diagnose, inspectStdio: values["inspect-stdio"], stdioCwd: values["stdio-cwd"] });
+      printOnboarding(report, values.json || values.details, () => formatImportWorkflow(report));
+      process.exitCode = report.failed ? 1 : 0;
+      return;
+    }
+    if (action === "sync-local") {
+      validateArguments(positionals, 2, values, ["hub", "profile", "profiles-file", "apply", "dry-run", "prune", "fetch-a2a-cards", "refresh", "diagnose", "inspect-stdio", "stdio-cwd"]);
+      if (!values.profile || values.apply && values["dry-run"]) {
+        throw new Error("Use registry sync-local --profile NAME with a preview or explicit --apply.");
+      }
+      const { syncLocalWorkflow } = await import("./onboarding/import-workflow.js");
+      const report = await syncLocalWorkflow(client, hub, { profile: values.profile, profilesFile: values["profiles-file"], apply: values.apply,
+        prune: values.prune, fetchA2aCards: values["fetch-a2a-cards"], refresh: values.refresh, diagnose: values.diagnose,
+        inspectStdio: values["inspect-stdio"], stdioCwd: values["stdio-cwd"] });
+      printOnboarding(report, values.json, () => "Synchronization " + (report.applied ? "applied" : "preview") + ": " + JSON.stringify(report.profile)
+        + "\n" + report.plan.items.map((item) => item.action.toUpperCase() + " " + item.id + (item.fields.length ? " " + item.fields.join(", ") : "")
+          + (item.issue ? " " + item.issue : "")).join("\n") + "\n" + (report.failed ? "Review failed or conflicting outcomes." : "No tools or tasks were invoked."));
+      process.exitCode = report.failed ? 1 : 0;
+      return;
+    }
+    if (action === "duplicates") {
+      validateArguments(positionals, 2, values, ["hub", "limit", "keep", "remove", "apply"]);
+      const { manageDuplicates } = await import("./registry/duplicates.js");
+      const report = await manageDuplicates(client, { limit: values.limit === undefined ? undefined : Number(values.limit),
+        keep: values.keep, remove: values.remove, apply: values.apply });
+      printOnboarding(report, values.json, () => report.groups.length + " duplicate groups. " + (report.applied ? "Cleanup attempted." : "Preview only.")
+        + "\n" + report.groups.map((group) => group.ids.join(", ") + (group.differingFields.length ? " differs: " + group.differingFields.join(", ") : "")).join("\n")
+        + "\nNo target tool/task calls were made.");
+      process.exitCode = report.ready ? 0 : 1;
       return;
     }
     if (action === "import-config") {
@@ -452,6 +552,20 @@ export async function runCli(args: string[]): Promise<void> {
 
   // 6. Validate command arguments and input files before printing results.
   const action = positionals[1];
+  if (action === "inspect-stdio") {
+    validateArguments(positionals, 3, values, ["hub", "apply", "stdio-cwd"]);
+    const id = targetIdSchema.parse(positionals[2]);
+    if ((await client.get(id)).connection.transport !== "stdio") {
+      throw new Error("Select a registered stdio MCP target for inspect-stdio.");
+    }
+    const { followUpImport } = await import("./onboarding/import-follow-up.js");
+    const { expected: _expected, ...report } = await followUpImport(client, [id], {
+      diagnose: true, refresh: Boolean(values.apply), inspectStdio: true, stdioCwd: values["stdio-cwd"] });
+    printOnboarding(report, values.json, () => report.outcomes.map((item) => item.id + " " + item.status + (item.updated ? " (metadata updated)" : "")).join("\n")
+      + "\nThe local server process was authorized for metadata inspection only; no tools were called.");
+    process.exitCode = report.failed ? 1 : 0;
+    return;
+  }
   if (["edit", "enable", "disable"].includes(action ?? "")) {
     validateArguments(positionals, 3, values, ["hub", "dry-run", "if-match", ...(action === "edit" ? ["name", "description", "add-tag", "remove-tag"] : [])]);
     const { editTarget } = await import("./targets/edit.js");

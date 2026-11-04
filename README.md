@@ -56,7 +56,7 @@ npm ci
 npm run demo
 ```
 
-Published [GitHub releases](https://github.com/jiind/agent-tcdh/releases) provide built tarballs, source manifests, and checksums. See the [v0.1.4 release notes](docs/releases/v0.1.4.md) for current source features, verification scope, and separate publication checks. Source commands below use the repository checkout; an installed CLI uses `agent-tcdh` in place of `npm run cli --` or `node dist/index.js`.
+Published [GitHub releases](https://github.com/jiind/agent-tcdh/releases) provide built tarballs, source manifests, and checksums. See the [v0.1.5 release notes](docs/releases/v0.1.5.md) for current source features, verification scope, and separate publication checks. Source commands below use the repository checkout; an installed CLI uses `agent-tcdh` in place of `npm run cli --` or `node dist/index.js`.
 
 The demo starts an isolated hub, registers three local targets, discovers them, and calls HTTP MCP, stdio MCP, and A2A targets directly. It checks execution receipts and cleans up. No account, API key, external service, or model is needed.
 
@@ -143,9 +143,18 @@ Version `0.1.4` adds `--version` (`-v`) for the package version, `--version --js
 
 Version `0.1.4` also supports `target refresh --all` to preview remote metadata updates across selected registrations; `--apply` saves changed definitions with per-target version checks. Filters, selection limits, bounded concurrency, skipped targets, and independent failures are reported. See [batch metadata refresh](docs/batch-refresh.md). Use repeated `--select ID` options with `doctor` or `target refresh` to process an explicit group without enumerating the catalog; see [explicit target selection](docs/target-selection.md). Version `0.1.3` does not include these additions.
 
-## Unreleased local connection import
+## Import management in v0.1.5
 
-Source checkouts can discover existing MCP connections in Codex, Claude Code, OpenCode, Gemini CLI, Cursor, and VS Code configuration files, plus Gemini remote A2A definitions. `registry import-local` previews source-qualified selection keys and duplicate connections; `--select KEY` narrows the group and `--apply` registers it atomically. Remote A2A cards are fetched only with explicit `--fetch-a2a-cards`. See [local client import](docs/local-import.md) for source locations, credentials, limits, and client-specific scope. Published `0.1.4` does not contain this command.
+Bring existing MCP connections from Codex, Claude Code, OpenCode, Gemini CLI, Cursor, and VS Code configuration files, plus Gemini remote A2A definitions. Preview source-qualified choices and duplicates, use terminal checkboxes, and save a private profile for later synchronization. Optional metadata refresh/diagnosis and explicit stdio inspection complete the import flow; registry-wide duplicate cleanup is separately previewed.
+
+```sh
+agent-tcdh registry import-local --interactive --save-profile work --apply
+agent-tcdh registry sync-local --profile work
+agent-tcdh registry sync-local --profile work --apply --refresh --diagnose
+agent-tcdh registry duplicates
+```
+
+These commands require `0.1.5` or later. See [local client import](docs/local-import.md), [the complete management workflow](docs/import-management.md), and [release notes](docs/releases/v0.1.5.md) for locations, source conflicts, credential references, optional pruning, and explicit process authorization. Existing client source files are not edited. Stdio startup requires dedicated authorization in the consumer CLI.
 
 ## MCP discovery
 
@@ -241,7 +250,7 @@ Real-agent/model checks are also opt-in and can consume model usage. See [verifi
 - [Local demo](docs/local-demo.md)
 - [MCP/A2A agent registration compatibility](docs/agent-compatibility.md)
 - [Actual-agent verification](docs/agent-verification.md)
-- [v0.1.4 release notes](docs/releases/v0.1.4.md), [v0.1.3 release notes](docs/releases/v0.1.3.md), [v0.1.2 release notes](docs/releases/v0.1.2.md), [changelog](CHANGELOG.md), and [release process](docs/releasing.md)
+- [v0.1.5 release notes](docs/releases/v0.1.5.md), [v0.1.4 release notes](docs/releases/v0.1.4.md), [v0.1.3 release notes](docs/releases/v0.1.3.md), [v0.1.2 release notes](docs/releases/v0.1.2.md), [changelog](CHANGELOG.md), and [release process](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
 
 Project documentation, comments, and application messages use English. Original provider metadata and intentional Unicode fixtures retain their original text.

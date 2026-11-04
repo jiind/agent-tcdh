@@ -12,7 +12,7 @@ import type { LocalAgent } from "./local-a2a.js";
 import { expandLocalSources, localSourceLocations } from "./local-sources.js";
 import type { LocalSource, LocalSourceOptions } from "./local-sources.js";
 
-interface Entry {
+export interface Entry {
   key: string;
   source: string;
   name: string;
@@ -34,6 +34,8 @@ export interface LocalImportOptions extends LocalSourceOptions {
   prefix?: string | undefined;
   hub?: string | undefined;
   fetchA2aCards?: boolean | undefined;
+  sourceLocations?: LocalSource[] | undefined;
+  allowMissingSelected?: boolean | undefined;
 }
 
 /** Require an ordinary configuration object while suppressing parser output that could contain source values. */
@@ -151,7 +153,8 @@ export async function prepareLocalImport(input: LocalImportOptions, environment 
   }
   const selectedKeys = requested === undefined ? undefined : new Set(requested);
   const locations = localSourceLocations(input, environment);
-  const sources = await expandLocalSources(locations.sources);
+  const sourceLocations = input.sourceLocations ?? locations.sources;
+  const sources = await expandLocalSources(sourceLocations);
   const sourceReports: (LocalSource & { status: "missing" | "empty" | "found" | "error"; entries: number })[] = [];
   const candidates: Candidate[] = [];
   const issues: ImportIssue[] = [];
@@ -189,7 +192,8 @@ export async function prepareLocalImport(input: LocalImportOptions, environment 
     }
   }
   const availableKeys = new Set(candidates.map((candidate) => candidate.entry.key));
-  if (requested?.some((key) => !availableKeys.has(key))) {
+  const missingSelections = requested?.filter((key) => !availableKeys.has(key)) ?? [];
+  if (missingSelections.length && !input.allowMissingSelected) {
     throw new Error("Selections must name discovered local entry keys. Preview the same scope before selecting.");
   }
 
@@ -282,6 +286,7 @@ export async function prepareLocalImport(input: LocalImportOptions, environment 
   preparedSnapshot(targets);
   const selected = candidates.filter((candidate) => candidate.entry.selected).length;
   return { format: "local-clients", scope: locations.scope, project: locations.project, sources: sourceReports,
+    sourceLocations, missingSelections,
     entries: candidates.map((candidate) => candidate.entry), available: candidates.length, selected, converted: targets.length,
     ready: targets.length > 0 && !issues.some((issue) => issue.severity === "error")
       && candidates.every((candidate) => !candidate.entry.selected || candidate.entry.status !== "blocked"),

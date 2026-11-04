@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+No changes yet.
+
+## 0.1.5 — 2026-11-04
+
 - Add bounded local client configuration discovery with source-qualified selection, duplicate origins, portable MCP adapters, and Gemini A2A card imports with explicit remote inspection.
+- Add terminal checkbox selection and private reusable source profiles with pinned locations, selectors, and hub identity.
+- Add tracked source synchronization with field-level conflict detection, preservation of hub-only changes, guarded optional pruning, and acknowledged ownership checkpoints.
+- Add optional post-import refresh/diagnosis, registry duplicate previews and explicit conditional cleanup, and bounded consumer-side stdio metadata inspection with owned-process teardown.
+
+The hub remains a discovery registry. SQLite schema version 2 and snapshot format version 1 are unchanged; private import-profile storage uses its own versioned format. See [v0.1.5 release notes](docs/releases/v0.1.5.md) for process authorization, synchronization scope, compatibility, and publication checks.
 
 ## 0.1.4 — 2026-11-04
 

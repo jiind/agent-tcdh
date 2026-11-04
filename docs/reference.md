@@ -4,7 +4,7 @@ CLI, connection definitions, protocol details, authentication, and deployment se
 
 ## CLI
 
-This reference targets AgentTCDH `0.1.4`. See [guided setup](onboarding.md), including [batch diagnostics](onboarding.md#inspect-multiple-registrations), [configuration import and presets](config-import.md), [client connections](client-connections.md), [target management](target-management.md), and [registry comparison](registry-comparison.md). Version `0.1.1` supports the original CLI and does not include these additions. Check the [release notes](releases/v0.1.4.md) for installation and publication status.
+This reference targets AgentTCDH `0.1.5`. See [guided setup](onboarding.md), including [batch diagnostics](onboarding.md#inspect-multiple-registrations), [configuration import and presets](config-import.md), [client connections](client-connections.md), [target management](target-management.md), and [registry comparison](registry-comparison.md). Version `0.1.1` supports the original CLI and does not include these additions. Check the [release notes](releases/v0.1.5.md) for installation and publication status.
 
 ```text
 agent-tcdh --version [--json]
@@ -36,8 +36,14 @@ agent-tcdh target get <ID> [--with-version] [--hub URL]
 agent-tcdh target list [--q QUERY] [--protocol mcp|a2a] [--tag TAG]
                      [--limit COUNT] [--offset OFFSET] [--include-disabled] [--hub URL]
 agent-tcdh target remove <ID> [--dry-run] [--if-match ETAG] [--hub URL]
+agent-tcdh import-profile list|show|remove [NAME] [--profiles-file FILE] [--apply]
+agent-tcdh registry sync-local --profile NAME [--prune] [--apply] [--refresh] [--diagnose] [--inspect-stdio]
+agent-tcdh registry duplicates [--limit COUNT] [--keep ID --remove ID ...] [--apply]
+agent-tcdh target inspect-stdio ID [--apply] [--stdio-cwd DIR]
 agent-tcdh registry import-local [--client CLIENT ...] [--scope all|user|project] [--home DIR] [--project DIR]
-                     [--select KEY ...] [--prefix PREFIX] [--fetch-a2a-cards] [--apply | --compare]
+                     [--select KEY ... | --interactive] [--profile NAME | --save-profile NAME]
+                     [--prefix PREFIX] [--fetch-a2a-cards] [--apply | --compare]
+                     [--refresh] [--diagnose] [--inspect-stdio] [--stdio-cwd DIR]
 agent-tcdh registry import-config <FILE> [--format FORMAT] [--select NAME ...] [--prefix PREFIX] [--apply | --compare] [--details]
 agent-tcdh preset list
 agent-tcdh preset show <NAME> [--select ID ...] [--compare] [--details]
@@ -54,7 +60,9 @@ Batch refresh and repeated `--select ID` selection for doctor/refresh require `0
 
 The `--version`/`-v` flag and doctor runtime identity require `0.1.4`; they are also absent from `0.1.3`. See [local version and runtime](onboarding.md#local-version-and-runtime) for the JSON fields and configuration-independent behavior.
 
-`registry import-local` is an unreleased source addition, absent from `0.1.4`. See [local client discovery/import](local-import.md) for source paths, selection keys, duplicates, and opt-in A2A metadata requests.
+`registry import-local` requires `0.1.5`. See [local client discovery/import](local-import.md) for source paths, selection keys, duplicates, and opt-in A2A metadata requests.
+
+The `0.1.5` [import-management bundle](import-management.md) additionally provides `--interactive`, `--save-profile`, `--profile`, optional follow-up, and the commands shown above. They are absent from `0.1.4`.
 
 The default command is `serve`. Existing administrative commands print JSON; setup, edit/state, and comparison commands show readable terminal summaries with JSON when redirected or requested using `--json`; failures print diagnostics to stderr and exit with code 1. `target check` also prints failed/skipped reports as JSON and uses the exit codes below. Use `--help` for all options.
 
@@ -113,7 +121,7 @@ Refresh preserves administrator labels, description, tags, enabled state, and au
 
 Concurrent label changes are reread and preserved; changed connection details stop refresh. The final conditional write uses the latest ETag and fails with 412 if another write occurs afterward. No automatic retry is performed. Refresh requires a hub supporting target versions; `--dry-run` leaves the revision unchanged.
 
-Inspection occurs in the CLI, not the hub. OAuth login and API-key header setup are not automated. Stdio definitions are managed as JSON without executing commands during import/refresh. Inspection limits: 10 seconds overall, 1 MiB per response, 200 capabilities, and 50 MCP pages. Cyclic cursors and redirects are rejected; use the final URL.
+Inspection occurs in the CLI, not the hub. OAuth login and API-key header setup are not automated. Default import/refresh operations manage stdio definitions without starting commands. The separate `0.1.5` [stdio inspection flow](import-management.md#inspect-stdio-only-with-explicit-authorization) requires explicit consumer-side authorization. Inspection limits: 10 seconds overall, 1 MiB per response, 200 capabilities, and 50 MCP pages. Cyclic cursors and redirects are rejected; use the final URL.
 
 ## Check registered metadata
 
