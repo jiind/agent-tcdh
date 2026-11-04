@@ -11,8 +11,8 @@ For local preparation from a clean committed checkout, before creating/pushing a
 ```sh
 npm ci --ignore-scripts
 npm run check
-npm run release:prepare -- --tag v0.1.3 --out release/v0.1.3
-npm run release:verify -- --tag v0.1.3 --directory release/v0.1.3
+npm run release:prepare -- --tag v0.1.4 --out release/v0.1.4
+npm run release:verify -- --tag v0.1.4 --directory release/v0.1.4
 ```
 
 These preparation commands only build and verify local assets. They do not create a git tag, a GitHub release, or an npm publication. The manifest records the exact source commit; prepare final candidates from the verified main commit after the release-preparation PR is merged. Keep candidate output directories for different commits separate.
@@ -25,7 +25,7 @@ The initial package must be created by an authorized npm account. Download and v
 
 ```sh
 npm login --auth-type=web --browser=false
-npm publish release/agent-tcdh-0.1.3.tgz --access public --ignore-scripts --browser=false
+npm publish release/agent-tcdh-0.1.4.tgz --access public --ignore-scripts --browser=false
 ```
 
 If a previous package was entirely unpublished, npm blocks publishing any new version under that name for 24 hours. Previously used package/version pairs cannot be reused. Check the public registry tombstone and [npm unpublish policy](https://docs.npmjs.com/policies/unpublish/) before publication.
@@ -36,4 +36,4 @@ Keep account authentication outside the repository. Complete any npm account/2FA
 
 For subsequent releases, configure the package's **Trusted Publisher** on npm with GitHub owner `jiind`, repository `agent-tcdh`, and workflow filename `publish-npm.yml` (no environment name). Then run that workflow from the `main` branch with the published release tag. It downloads the GitHub assets, verifies their source identity and installed behavior, and publishes the same tarball using OIDC. It needs no stored npm token. This workflow requires the external npm trust configuration; merely committing the workflow does not enable it. See [npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
 
-Verify the public registry version, `latest` tag, package integrity, and `npx --yes agent-tcdh@0.1.3 --help` after first publication. The GitHub release and npm registry are separate destinations; record their actual status separately.
+Verify the public registry version, `latest` tag, package integrity, and `npx --yes agent-tcdh@0.1.4 --help` after first publication. The GitHub release and npm registry are separate destinations; record their actual status separately.

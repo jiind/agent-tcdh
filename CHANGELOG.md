@@ -2,11 +2,15 @@
 
 ## Unreleased
 
+No changes yet.
+
+## 0.1.4 — 2026-11-04
+
 - Add configuration-independent `--version`/`-v`, JSON runtime identity, and local CLI/Node/platform details in doctor reports.
-
 - Add repeated explicit target-ID selection for batch diagnosis and refresh, preserving request order and validating the complete group before provider work.
-
 - Add preview-first batch metadata refresh with filtered bounded selection, per-target credentials, conditional updates, no-op preservation, and independent outcomes.
+
+Node.js 24+, SQLite schema version 2, snapshot format version 1, and HTTP/MCP/A2A contracts remain unchanged. See the [release notes](docs/releases/v0.1.4.md) for batch selection, refresh scope, and publication checks.
 
 ## 0.1.3 — 2026-10-30
 

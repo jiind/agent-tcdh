@@ -1,6 +1,6 @@
 # Refresh metadata for multiple registrations
 
-This feature is unreleased and requires a source checkout containing batch refresh. Published `0.1.3` does not include this mode. Existing single-target refresh retains its original behavior: it applies immediately unless `--dry-run` is supplied.
+Batch refresh requires AgentTCDH `0.1.4` or later. Version `0.1.3` does not include this mode. Existing single-target refresh retains its original behavior: it applies immediately unless `--dry-run` is supplied.
 
 ```sh
 npm run build
