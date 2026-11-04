@@ -1,6 +1,6 @@
 # Bring connections from other local AI clients
 
-This feature is unreleased and requires a source checkout containing `registry import-local`. Published `0.1.4` does not include it. Build the checkout with `npm ci` and `npm run build`; replace `agent-tcdh` below with `node dist/index.js` until a package containing this command is published.
+Requires AgentTCDH `0.1.5` or later; version `0.1.4` does not include local discovery/import. See [release notes](releases/v0.1.5.md) for artifact availability. From a source checkout, build with `npm ci` and `npm run build`, then replace `agent-tcdh` below with `node dist/index.js`.
 
 Discover MCP connections already declared in other clients, plus Gemini CLI remote A2A definitions. Preview their origins and selection keys before importing:
 
@@ -45,7 +45,7 @@ The existing portable MCP conversion rules apply. Gemini `httpUrl` means Streama
 
 Inline environment/Bearer values are omitted with diagnostics. An omitted Bearer value receives a source-specific proposed variable name. Client-managed auth, custom headers, environment aliases, input/workspace substitutions, working directories, and unsupported execution settings require manual configuration. Literal stdio arguments are preserved and must be reviewed: the importer does not perform general secret detection. Client-side policy does not migrate with a connection.
 
-MCP capabilities start empty, and `metadataInspected` remains false. Remote metadata can subsequently be populated with [batch refresh](batch-refresh.md). Registered stdio commands are never launched by local import.
+MCP capabilities start empty, and `metadataInspected` remains false. Remote metadata can subsequently be populated with [batch refresh](batch-refresh.md). Registered stdio commands are not launched by default. The [import-management flow](import-management.md) adds explicit `--apply --refresh --inspect-stdio` authorization for consumer-side metadata inspection.
 
 ## Gemini A2A definitions
 
@@ -74,3 +74,5 @@ Missing files and files without a relevant container are reported without becomi
 ## Inspected client documentation
 
 Locations and adapters were checked on 2026-11-04 against [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-advanced), [Claude Code MCP](https://code.claude.com/docs/en/mcp), [OpenCode configuration](https://opencode.ai/v2/docs/config/), [Gemini MCP](https://geminicli.com/docs/tools/mcp-server/), [Gemini remote A2A agents](https://geminicli.com/docs/core/remote-agents/), [Cursor MCP](https://cursor.com/docs/mcp), and [VS Code MCP configuration](https://code.visualstudio.com/docs/agent-customization/mcp-servers).
+
+See [import management](import-management.md) for interactive selection, saved profiles, synchronization, optional follow-up, duplicate cleanup, and the explicit stdio startup path.
