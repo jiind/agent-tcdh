@@ -18,9 +18,9 @@ export interface BatchDiagnosisReport {
   selectionIssue?: { code: string; message: string };
 }
 
-/** Select all matching registrations before probing, then inspect them with bounded concurrency. */
+/** Select explicit or matching registrations before probing, then inspect them with bounded concurrency. */
 export async function diagnoseBatch(client: HubClient, input: BatchDiagnosisOptions, environment = process.env): Promise<BatchDiagnosisReport> {
-  // 1. Validate the resource limits and gather a bounded, deduplicated list through read-only discovery.
+  // 1. Validate resource limits and resolve a bounded group through read-only registry requests.
   const options = batchDiagnosisOptionsSchema.parse(input);
   const report: BatchDiagnosisReport = { status: "passed", selection: options, matched: 0, complete: false,
     summary: { passed: 0, warning: 0, failed: 0 }, targets: [], executionVerified: false };

@@ -18,7 +18,7 @@ Usage:
   agent-tcdh disconnect <CLIENT> --file FILE [--name NAME] [--apply | --dry-run] [--normalize]
   agent-tcdh config backups --file FILE [--limit COUNT]
   agent-tcdh config restore <BACKUP_FILE> --file FILE [--apply | --dry-run]
-  agent-tcdh doctor [--target ID | --all] [--hub URL]
+  agent-tcdh doctor [--target ID | --all | --select ID ...] [--hub URL]
                        [--q QUERY] [--protocol mcp|a2a] [--tag TAG] [--include-disabled]
                        [--limit COUNT] [--concurrency COUNT]
   agent-tcdh target add <URL> [--protocol auto|mcp|a2a] [--id ID] [--dry-run]
@@ -32,6 +32,8 @@ Usage:
   agent-tcdh target import <URL> --id ID --protocol mcp|a2a [--dry-run] [--hub URL]
   agent-tcdh target refresh <ID> [--dry-run] [--hub URL]
   agent-tcdh target refresh --all [--apply | --dry-run] [--q QUERY] [--protocol mcp|a2a] [--tag TAG]
+                       [--include-disabled] [--limit COUNT] [--concurrency COUNT] [--hub URL]
+  agent-tcdh target refresh --select ID [--select ID ...] [--apply | --dry-run]
                        [--include-disabled] [--limit COUNT] [--concurrency COUNT] [--hub URL]
   agent-tcdh target check <ID> [--bearer-env VARIABLE] [--hub URL]
   agent-tcdh target get <ID> [--with-version] [--hub URL]
@@ -64,7 +66,7 @@ Options:
   --details             Include full definitions and print JSON comparison output
   --apply               Apply an import, batch refresh, disconnection, or config restore; previews are the default
   --format FORMAT       Client config format: auto, codex, opencode, opencode-v1, mcp-json
-  --select NAME         Repeat to select source server names or preset target ids
+  --select NAME         Repeat for source server names, preset IDs, or explicit doctor/refresh target IDs
   --prefix PREFIX       Namespace imported target ids
   --no-config           Ignore setup files for an explicitly configured stdio discovery bridge
   --anonymous           Use anonymous hub access for mcp; never resolve credential variables
@@ -272,12 +274,15 @@ export async function runCli(args: string[]): Promise<void> {
     return;
   }
   if (command === "doctor") {
-    validateArguments(positionals, 1, values, ["hub", "target", "all", "q", "protocol", "tag", "include-disabled", "limit", "concurrency"]);
-    if (values.target && values.all || !values.all && ["q", "protocol", "tag", "include-disabled", "limit", "concurrency"].some((key) => values[key as keyof typeof values] !== undefined)) {
-      throw new Error("Choose --target or --all. Batch filters and limits require --all.");
+    validateArguments(positionals, 1, values, ["hub", "target", "all", "select", "q", "protocol", "tag", "include-disabled", "limit", "concurrency"]);
+    const explicit = values.select !== undefined;
+    if (Number(Boolean(values.target)) + Number(Boolean(values.all)) + Number(explicit) > 1
+      || !values.all && !explicit && ["q", "protocol", "tag", "include-disabled", "limit", "concurrency"].some((key) => values[key as keyof typeof values] !== undefined)
+      || explicit && ["q", "protocol", "tag"].some((key) => values[key as keyof typeof values] !== undefined)) {
+      throw new Error("Choose --target, --all, or repeated --select IDs. Discovery filters require --all; batch resource options require --all or --select.");
     }
     const { batchDiagnosisOptionsSchema } = await import("./onboarding/doctor-batch.js");
-    const batch = values.all ? batchDiagnosisOptionsSchema.parse({ q: values.q, protocol: values.protocol, tag: values.tag,
+    const batch = values.all || explicit ? batchDiagnosisOptionsSchema.parse({ select: values.select, q: values.q, protocol: values.protocol, tag: values.tag,
       includeDisabled: values["include-disabled"], limit: values.limit === undefined ? undefined : Number(values.limit),
       concurrency: values.concurrency === undefined ? undefined : Number(values.concurrency) }) : undefined;
     const { diagnose } = await import("./onboarding/doctor.js");
@@ -322,7 +327,7 @@ export async function runCli(args: string[]): Promise<void> {
   const readCommand = command === "registry" && (positionals[1] === "diff" || positionals[1] === "import-config" && values.compare)
     || command === "preset" && ["show", "import"].includes(positionals[1] ?? "") && values.compare
     || command === "mcp" || command === "target" && (["list", "get", "check"].includes(positionals[1] ?? "")
-    || positionals[1] === "refresh" && values.all && !values.apply
+    || positionals[1] === "refresh" && (values.all || values.select !== undefined) && !values.apply
     || ["refresh", "edit", "enable", "disable", "remove"].includes(positionals[1] ?? "") && values["dry-run"]);
   if (!readCommand && !metadataPreview && !values["token-env"] && config?.readTokenEnv && !config.tokenEnv && !process.env.AGENT_TCDH_TOKEN) {
     throw new Error("This setup has only read credentials. Select an administrator credential with --token-env for mutations.");
@@ -446,13 +451,16 @@ export async function runCli(args: string[]): Promise<void> {
     return;
   }
   if (action === "refresh") {
-    if (values.all) {
-      validateArguments(positionals, 2, values, ["hub", "all", "apply", "dry-run", "q", "protocol", "tag", "include-disabled", "limit", "concurrency"]);
+    if (values.all || values.select !== undefined) {
+      validateArguments(positionals, 2, values, ["hub", "all", "select", "apply", "dry-run", "q", "protocol", "tag", "include-disabled", "limit", "concurrency"]);
+      if (values.all && values.select !== undefined || values.select !== undefined && ["q", "protocol", "tag"].some((key) => values[key as keyof typeof values] !== undefined)) {
+        throw new Error("Choose --all with discovery filters or repeated --select IDs, not both.");
+      }
       if (values.apply && values["dry-run"]) {
         throw new Error("Choose either a batch preview or --apply, not both.");
       }
       const { batchTargetOptionsSchema } = await import("./targets/batch.js");
-      const options = batchTargetOptionsSchema.parse({ q: values.q, protocol: values.protocol, tag: values.tag,
+      const options = batchTargetOptionsSchema.parse({ select: values.select, q: values.q, protocol: values.protocol, tag: values.tag,
         includeDisabled: values["include-disabled"], limit: values.limit === undefined ? undefined : Number(values.limit),
         concurrency: values.concurrency === undefined ? undefined : Number(values.concurrency) });
       const { refreshBatch } = await import("./targets/refresh-batch.js");

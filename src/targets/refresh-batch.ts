@@ -42,7 +42,7 @@ function validateRefreshTarget(target: Target, options: BatchTargetOptions): voi
 /** Preview or independently apply guarded metadata refreshes with bounded selection and concurrency. */
 export async function refreshBatch(client: Pick<HubClient, "search" | "getVersioned" | "update">,
   input: BatchTargetOptions, apply = false, environment: NodeJS.ProcessEnv = process.env) {
-  // 1. Finish all discovery pages before contacting any provider or attempting a registry update.
+  // 1. Resolve the complete target group before contacting any provider or attempting a registry update.
   const options = batchTargetOptionsSchema.parse(input);
   const selection = await selectBatchTargets(client, options);
   const summary = { planned: 0, updated: 0, unchanged: 0, skipped: 0, failed: 0 };
