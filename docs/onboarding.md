@@ -141,7 +141,7 @@ agent-tcdh doctor --all --tag imported-config --protocol mcp --concurrency 3
 agent-tcdh doctor --all --q docs --include-disabled --limit 200 --json
 ```
 
-`--all` explicitly opts into inspecting every registration matching the selected filters. Without it, ordinary `doctor` still checks only the hub; `--target ID` still inspects one target. Batch filters and resource options require `--all`; `--target` and `--all` cannot be combined. Keyword, protocol, and tag filters have the same meaning as `target list`. Disabled registrations are excluded unless `--include-disabled` is supplied.
+`--all` explicitly opts into inspecting every registration matching the selected filters. Without it, ordinary `doctor` still checks only the hub; `--target ID` still inspects one target. Discovery filters require `--all`; `--target` and `--all` cannot be combined. Source checkouts additionally support repeated `--select ID` as an alternative batch selector, with batch limits/concurrency and `--include-disabled`; see [explicit target selection](target-selection.md). Keyword, protocol, and tag filters have the same meaning as `target list`. Disabled registrations are excluded unless `--include-disabled` is supplied.
 
 The batch first collects matching IDs through the read-only paginated discovery API. `--limit` is a safety cap, default 100, allowed range 1–1000. If the match count exceeds that cap, selection fails before any provider metadata requests or local executable checks. It does not silently truncate the list. Narrow the filters or explicitly increase the cap. Detected changes in page totals, duplicate IDs, incomplete pages, and discovery errors also stop selection before target inspection.
 

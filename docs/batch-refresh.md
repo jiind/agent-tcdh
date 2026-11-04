@@ -1,6 +1,6 @@
 # Refresh metadata for multiple registrations
 
-This feature is unreleased and requires a source checkout containing `target refresh --all`. Published `0.1.3` does not include this mode. Existing single-target refresh retains its original behavior: it applies immediately unless `--dry-run` is supplied.
+This feature is unreleased and requires a source checkout containing batch refresh. Published `0.1.3` does not include this mode. Existing single-target refresh retains its original behavior: it applies immediately unless `--dry-run` is supplied.
 
 ```sh
 npm run build
@@ -9,15 +9,17 @@ node dist/index.js target refresh --all --tag team-docs --apply
 node dist/index.js target refresh --all --protocol a2a --limit 200 --concurrency 3 --json
 ```
 
-Batch mode defaults to a preview. `--dry-run` explicitly requests that same behavior; do not combine it with `--apply`. Do not provide an ID with `--all`. Without `--all`, existing single-target arguments and output remain unchanged.
+Select matching registrations with `--all` or an explicit group with repeated `--select ID` options. See [explicit target selection](target-selection.md) for whole-group checks and request ordering.
+
+Batch mode defaults to a preview. `--dry-run` explicitly requests that same behavior; do not combine it with `--apply`. Do not provide a positional ID with either batch selector or combine `--all` and `--select`. Without either batch selector, existing single-target arguments and output remain unchanged.
 
 ## Selection and remote inspection
 
 Keyword, protocol, tag, and disabled-state filters have the same meaning as discovery. Disabled targets are excluded by default; `--include-disabled` permits inspecting and updating them while preserving their disabled state. The default selection limit is 100, maximum 1000. Concurrency defaults to 3 and accepts integers from 1 to 8.
 
-The CLI collects all read-only discovery pages before probing providers or writing anything. Exceeding `--limit`, duplicate/incomplete pages, mismatched pagination, or an observed total change stops selection without per-target work. The shared collector also serves `doctor --all`.
+With `--all`, the CLI collects all read-only discovery pages before probing providers or writing anything. With `--select`, it resolves the requested IDs directly and validates the complete group before provider work. Exceeding `--limit`, duplicate/incomplete pages, mismatched pagination, or an observed total change stops selection without per-target work. The shared collector also serves `doctor --all`.
 
-Discovery is a paginated observation, not a transactional snapshot. Same-count membership changes can escape page checks. Selected IDs retain discovery order in the report; their current definitions are reread before inspection. Changes to keyword/tag/protocol membership after selection do not trigger a new search. A target disabled before either refresh reread is skipped unless `--include-disabled` is set.
+Discovery is a paginated observation, not a transactional snapshot. Same-count membership changes can escape page checks. Discovery-selected IDs retain discovery order; explicitly selected IDs retain input order. In both modes, their current definitions are reread before inspection. Changes to keyword/tag/protocol membership after selection do not trigger a new search. A target disabled before either refresh reread is skipped unless `--include-disabled` is set.
 
 The command runs in the CLI environment. It initializes remote HTTP/SSE MCP servers and lists tools, or retrieves an A2A Agent Card using the target's existing metadata location, binding, and version. Existing metadata response, pagination, and timeout bounds still apply. It does not execute tools/tasks or launch registered stdio commands. Metadata inspection is an outbound connection even in preview mode; it is not an offline operation.
 
