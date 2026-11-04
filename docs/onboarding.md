@@ -2,6 +2,24 @@
 
 Core setup requires AgentTCDH `0.1.2` or later; saved-profile checks, disconnection, backup discovery, and restoration require `0.1.3`. From a source checkout, run `npm ci` and `npm run build`, then replace `agent-tcdh` below with `node dist/index.js`. See the [v0.1.2 release notes](releases/v0.1.2.md) for installation and publication checks. The default suite uses temporary files and local protocol fixtures; it does not modify personal agent configuration or run models.
 
+## Local version and runtime
+
+Source checkouts add `--version` (`-v`) and local runtime identity in diagnostics. Published `0.1.3` does not include these additions.
+
+```sh
+node dist/index.js --version
+node dist/index.js -v
+node dist/index.js --version --json
+```
+
+Plain version mode always prints the package version and a newline, including when redirected. `--json` explicitly returns `name`, `version`, `node`, `platform`, and `arch`. These describe the current CLI process and its Node runtime, not a remote hub or consuming agent. No configuration, credential values, environment paths, or network responses are included.
+
+Version mode runs before setup loading or credential resolution. It remains available if `AGENT_TCDH_CONFIG` points to a missing/invalid file, the hub URL is invalid, or credentials are unavailable. Use it by itself with optional `--json`; positional commands and other options are rejected. Help retains its existing precedence when `--help` is supplied.
+
+The version is the declared package version shared with protocol metadata. A source checkout can include unreleased changes without a version bump, so this output does not identify a Git revision or certify a particular feature set; use `--help` and the changelog for those details.
+
+`doctor` reports now add a top-level `runtime` object with the same fields, and terminal output includes a short runtime header. This is local identity, not a hub-version compatibility check. Doctor still loads setup and performs its usual hub/target diagnostics; `--version` is the local-only option for inspecting an installation before setup is usable. Existing diagnostic status and exit semantics are unchanged.
+
 ## Initialize once
 
 ```sh
@@ -161,9 +179,9 @@ Use `target edit` for labels/tags, `target enable`/`disable` for discovery state
 
 ## Terminal and automation output
 
-New setup/connection/diagnostic commands show readable summaries in a terminal. `target list` shows a compact table in a terminal. Piped output remains JSON, and `--json` explicitly requests JSON. Existing registration/get/update/remove and snapshot JSON shapes remain unchanged.
+New setup/connection/diagnostic commands show readable summaries in a terminal. `target list` shows a compact table in a terminal. Piped output remains JSON for these reports, and `--json` explicitly requests JSON. Plain `--version` always emits text; use `--version --json` for machine-readable local identity. Existing registration/get/update/remove and snapshot JSON shapes remain unchanged.
 
-`connect --print` is the deliberate exception: it emits only a TOML/JSON configuration fragment, including when piped. Do not combine it with `--write` or `--json`. `--dry-run` for connection requires an explicit `--write FILE` to preview.
+`connect --print` also has an explicit text/fragment mode: it emits only a TOML/JSON configuration fragment, including when piped. Do not combine it with `--write` or `--json`. `--dry-run` for connection requires an explicit `--write FILE` to preview.
 
 ## Refresh matching remote registrations
 

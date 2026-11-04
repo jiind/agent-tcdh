@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { HubClient } from "./client.js";
+import { PACKAGE_VERSION, runtimeInfo } from "./version.js";
 import { searchSchema, targetDefinitionSchema, targetIdSchema } from "./targets/schema.js";
 import { readClientToken } from "./auth.js";
 import { a2aSelectionSchema } from "./targets/a2a.js";
@@ -12,6 +13,7 @@ import type { ImportIssue } from "./onboarding/import-config.js";
 const help = `AgentTCDH — Agent & Tool Capability Discovery Hub
 
 Usage:
+  agent-tcdh --version [--json]
   agent-tcdh init [--yes] [--config FILE] [--hub URL] [--host HOST] [--port PORT] [--db FILE]
   agent-tcdh connect <CLIENT> [--print | --write FILE | --check FILE] [--dry-run] [--replace]
                        CLIENT: codex, opencode, opencode-v1, claude-code, gemini-cli, cursor, vscode
@@ -62,6 +64,7 @@ Environment:
 
 Options:
   --help, -h            Show usage
+  --version, -v         Print the package version; --json includes local runtime identity
   --compare             Compare a config/preset preview with current hub metadata (read-only)
   --details             Include full definitions and print JSON comparison output
   --apply               Apply an import, batch refresh, disconnection, or config restore; previews are the default
@@ -109,13 +112,14 @@ The default command is serve. Administrative results are printed as JSON.
 
 /** Validate commands and options before dispatching to the server, registry API, or MCP discovery. */
 export async function runCli(args: string[]): Promise<void> {
-  // 1. Parse shared options and handle help requests.
+  // 1. Parse shared options and handle help or local version requests.
   const { positionals, values } = parseArgs({
     args,
     allowPositionals: true,
     strict: true,
     options: {
       help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
       config: { type: "string" },
       "no-config": { type: "boolean" },
       anonymous: { type: "boolean" },
@@ -171,6 +175,18 @@ export async function runCli(args: string[]): Promise<void> {
   });
   if (values.help) {
     process.stdout.write(help);
+    return;
+  }
+
+  if (values.version) {
+    if (positionals.length || Object.keys(values).some((key) => !["version", "json"].includes(key))) {
+      throw new Error("Use --version by itself, with optional --json.");
+    }
+    if (values.json) {
+      printJson(runtimeInfo());
+    } else {
+      process.stdout.write(PACKAGE_VERSION + "\n");
+    }
     return;
   }
 
@@ -287,7 +303,9 @@ export async function runCli(args: string[]): Promise<void> {
       concurrency: values.concurrency === undefined ? undefined : Number(values.concurrency) }) : undefined;
     const { diagnose } = await import("./onboarding/doctor.js");
     const result = await diagnose({ hub, tokenEnv: values["token-env"] ?? consumerTokenEnv(config), target: values.target === undefined ? undefined : targetIdSchema.parse(values.target), batch });
-    printOnboarding(result, values.json, () => result.checks.map((check) => check.status.toUpperCase() + " " + check.id + ": " + check.message
+    printOnboarding(result, values.json, () => "AgentTCDH " + result.runtime.version + " | Node.js " + result.runtime.node
+      + " | " + result.runtime.platform + "/" + result.runtime.arch + "\n"
+      + result.checks.map((check) => check.status.toUpperCase() + " " + check.id + ": " + check.message
       + (check.status !== "passed" && check.action ? "\n  Next: " + check.action : "")).join("\n")
       + (result.batch ? "\n" + result.batch.targets.map((target) => target.status.toUpperCase() + " " + target.id + " (" + target.transport + ")\n"
         + target.checks.map((check) => "  " + check.status.toUpperCase() + " " + check.id + ": " + check.message

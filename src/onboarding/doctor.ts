@@ -8,6 +8,7 @@ import { checkTarget, type TargetCheckReport } from "../targets/check.js";
 import type { Target } from "../targets/schema.js";
 import type { BatchDiagnosisOptions, BatchDiagnosisReport } from "./doctor-batch.js";
 import { normalizeHub } from "./config.js";
+import { runtimeInfo } from "../version.js";
 
 export interface Check {
   id: string;
@@ -169,5 +170,5 @@ export async function diagnose(options: {
   } else if (options.batch) {
     checks.push({ id: "targets", status: "skipped", message: "Batch inspection requires working hub discovery." });
   }
-  return { status: diagnosticStatus(checks), hub, checks, executionVerified: false, ...(target ? { target } : {}), ...(batch ? { batch } : {}) };
+  return { status: diagnosticStatus(checks), runtime: runtimeInfo(), hub, checks, executionVerified: false, ...(target ? { target } : {}), ...(batch ? { batch } : {}) };
 }

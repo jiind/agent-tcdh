@@ -69,6 +69,15 @@ try {
   const help = await runCommand(executable, [...prefix, "--help"], { cwd: installation });
   assert.ok(help.stdout.includes("AgentTCDH"));
 
+  const installedVersion = await runCommand(executable, [...prefix, "--version"], { cwd: installation });
+  assert.equal(installedVersion.stdout, metadata.version + "\n");
+  const localIdentity = await runCommand(executable, [...prefix, "--version", "--json"], { cwd: installation,
+    env: { ...process.env, AGENT_TCDH_CONFIG: join(directory, "missing-setup.json"), AGENT_TCDH_URL: "invalid-hub-url",
+      AGENT_TCDH_TOKEN: "must not resolve this invalid credential" } });
+  const identity = JSON.parse(localIdentity.stdout);
+  assert.deepEqual(identity, { name: metadata.name, version: metadata.version, node: process.versions.node,
+    platform: process.platform, arch: process.arch });
+
   // 3. Start the installed CLI and verify protocols before and after restarting.
   const port = await availablePort();
   const url = "http://127.0.0.1:" + port;
@@ -171,6 +180,7 @@ try {
   assert.equal(JSON.parse(comparedSnapshot.stdout).applied, false);
   const doctor = await runCommand(executable, [...prefix, "doctor"], { cwd: installation, env: environment });
   assert.equal(JSON.parse(doctor.stdout).status, "passed");
+  assert.deepEqual(JSON.parse(doctor.stdout).runtime, identity);
   assert.equal(JSON.parse(doctor.stdout).executionVerified, false);
   const batchDoctor = await runCommand(executable, [...prefix, "doctor", "--all", "--q", "packaged-local", "--concurrency", "2"], { cwd: installation, env: environment });
   const batchReport = JSON.parse(batchDoctor.stdout);
@@ -274,7 +284,7 @@ try {
   assert.ok(demoResult.executions.some((entry) => entry.transport === "stdio"));
   assert.equal(demoResult.remainingTargets.length, 2);
   console.log(JSON.stringify({ package: manifest.filename, isolatedProductionInstall: true,
-    installedBinary: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
+    installedBinary: true, runtimeIdentity: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
 } finally {
   // 7. Clean up only the processes and temporary files created by this run.
   try {
