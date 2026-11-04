@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add configuration-independent `--version`/`-v`, JSON runtime identity, and local CLI/Node/platform details in doctor reports.
+
 - Add repeated explicit target-ID selection for batch diagnosis and refresh, preserving request order and validating the complete group before provider work.
 
 - Add preview-first batch metadata refresh with filtered bounded selection, per-target credentials, conditional updates, no-op preservation, and independent outcomes.
