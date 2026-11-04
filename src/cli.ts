@@ -42,6 +42,8 @@ Usage:
   agent-tcdh target list [--q QUERY] [--protocol mcp|a2a] [--tag TAG]
                        [--limit COUNT] [--offset OFFSET] [--include-disabled] [--hub URL]
   agent-tcdh target remove <ID> [--dry-run] [--if-match ETAG] [--hub URL]
+  agent-tcdh registry import-local [--client CLIENT ...] [--scope all|user|project] [--project DIR] [--home DIR]
+                       [--select KEY ...] [--prefix PREFIX] [--fetch-a2a-cards] [--apply | --compare]
   agent-tcdh registry import-config <FILE> [--format FORMAT] [--select NAME ...] [--prefix PREFIX] [--apply | --compare] [--details]
   agent-tcdh preset list
   agent-tcdh preset show <NAME> [--select ID ...] [--compare] [--details]
@@ -68,6 +70,11 @@ Options:
   --compare             Compare a config/preset preview with current hub metadata (read-only)
   --details             Include full definitions and print JSON comparison output
   --apply               Apply an import, batch refresh, disconnection, or config restore; previews are the default
+  --client CLIENT       Limit local import to named clients; repeat to choose several
+  --scope SCOPE         Local import sources: all (default), user, or project
+  --project DIR         Inspect this exact project directory (default: current directory)
+  --home DIR            Inspect this user home instead of native defaults and environment path overrides
+  --fetch-a2a-cards     Allow up to 10 selected A2A card metadata lookups; no tasks are executed
   --format FORMAT       Client config format: auto, codex, opencode, opencode-v1, mcp-json
   --select NAME         Repeat for source server names, preset IDs, or explicit doctor/refresh target IDs
   --prefix PREFIX       Namespace imported target ids
@@ -127,6 +134,11 @@ export async function runCli(args: string[]): Promise<void> {
       compare: { type: "boolean" },
       details: { type: "boolean" },
       format: { type: "string" },
+      client: { type: "string", multiple: true },
+      scope: { type: "string" },
+      project: { type: "string" },
+      home: { type: "string" },
+      "fetch-a2a-cards": { type: "boolean" },
       select: { type: "string", multiple: true },
       prefix: { type: "string" },
       json: { type: "boolean" },
@@ -340,9 +352,9 @@ export async function runCli(args: string[]): Promise<void> {
     throw new Error("Unknown command. Run --help for usage.");
   }
   const metadataPreview = !values.compare && (command === "target" && ["add", "import"].includes(positionals[1] ?? "") && values["dry-run"]
-    || command === "registry" && positionals[1] === "import-config" && !values.apply
+    || command === "registry" && ["import-config", "import-local"].includes(positionals[1] ?? "") && !values.apply
     || command === "preset" && (positionals[1] !== "import" || !values.apply));
-  const readCommand = command === "registry" && (positionals[1] === "diff" || positionals[1] === "import-config" && values.compare)
+  const readCommand = command === "registry" && (positionals[1] === "diff" || ["import-config", "import-local"].includes(positionals[1] ?? "") && values.compare)
     || command === "preset" && ["show", "import"].includes(positionals[1] ?? "") && values.compare
     || command === "mcp" || command === "target" && (["list", "get", "check"].includes(positionals[1] ?? "")
     || positionals[1] === "refresh" && (values.all || values.select !== undefined) && !values.apply
@@ -388,6 +400,19 @@ export async function runCli(args: string[]): Promise<void> {
       const { compareRegistry, formatComparison } = await import("./registry/diff.js");
       const report = await compareRegistry(client, await readSnapshot(positionals[2]!), { onConflict: values["on-conflict"], details: values.details });
       printOnboarding(report, values.json || values.details, () => formatComparison(report));
+      return;
+    }
+    if (action === "import-local") {
+      validateArguments(positionals, 2, values, ["hub", "client", "scope", "project", "home", "select", "prefix", "fetch-a2a-cards", "apply", "dry-run", "on-conflict", "compare", "details"]);
+      if (values.apply && (values["dry-run"] || values.compare) || values.details && !values.compare) {
+        throw new Error("Choose either --apply or a preview (--compare/--dry-run). --details requires --compare.");
+      }
+      const { importOptionsSchema } = await import("./registry/schema.js");
+      importOptionsSchema.parse({ onConflict: values["on-conflict"] });
+      const { prepareLocalImport } = await import("./onboarding/local-import.js");
+      const preparation = await prepareLocalImport({ clients: values.client, scope: values.scope, project: values.project,
+        home: values.home, select: values.select, prefix: values.prefix, hub, fetchA2aCards: values["fetch-a2a-cards"] });
+      await finishPreparedImport(preparation, client, Boolean(values.apply), values["on-conflict"], values.json, values.compare, values.details);
       return;
     }
     if (action === "import-config") {
@@ -575,6 +600,8 @@ export async function runCli(args: string[]): Promise<void> {
 async function finishPreparedImport<T extends {
   ready: boolean; targets: TargetDefinition[]; selected: number; converted: number;
   issues: ImportIssue[]; requiredEnvironmentVariables: string[]; metadataAsOf?: string;
+  sources?: { id: string; path: string; status: string; entries: number }[];
+  entries?: { key: string; status: string; targetId?: string; duplicateOf?: string }[];
 }>(preparation: T, client: HubClient, apply: boolean, onConflict: string | undefined, json: boolean | undefined,
   compare?: boolean, details?: boolean): Promise<void> {
   // 1. Preserve the existing conflict policy and refuse partial application of blocked plans.
@@ -591,11 +618,17 @@ async function finishPreparedImport<T extends {
     hubConflictsChecked: result !== undefined || comparison !== undefined, ...(result ? { result } : {}), ...(comparison ? { comparison } : {}) };
   printOnboarding(report, json || details, () => preparation.converted + "/" + preparation.selected + " selected connections prepared. "
     + (result ? "Applied to the hub." : ready ? "Preview only; no hub changes. Use the import command with --apply to register." : "Not ready; resolve source errors or destination conflicts.")
+    + (preparation.sources ? "\nSources:\n" + preparation.sources.filter((source) => source.status !== "missing")
+      .map((source) => JSON.stringify(source.id) + " " + source.status + " (" + source.entries + ") " + JSON.stringify(source.path)).join("\n") : "")
+    + (preparation.entries ? "\nSelection keys:\n" + preparation.entries.map((entry) => JSON.stringify(entry.key) + " " + entry.status
+      + (entry.targetId ? " -> " + JSON.stringify(entry.targetId) : "") + (entry.duplicateOf ? " (same connection as " + JSON.stringify(entry.duplicateOf) + ")" : "")).join("\n") : "")
     + "\n" + preparation.targets.map((target) => target.id + " (" + target.connection.transport + ")").join("\n")
     + "\n" + preparation.issues.map((issue) => issue.severity.toUpperCase() + " " + JSON.stringify(issue.name) + " " + issue.code + ": " + issue.message).join("\n")
     + (preparation.requiredEnvironmentVariables.length ? "\nRequired in the consuming environment: " + preparation.requiredEnvironmentVariables.join(", ") : "")
     + (comparison ? "\n" + formatComparison(comparison) : "")
-    + "\nNo target connections or executions were performed.");
+    + ("metadataInspected" in preparation && preparation.metadataInspected
+      ? "\nSelected A2A card metadata was inspected. No target tasks or tools were executed."
+      : "\nNo target connections or executions were performed."));
   if (!ready) {
     process.exitCode = 1;
   }

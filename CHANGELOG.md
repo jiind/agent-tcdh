@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-No changes yet.
+- Add bounded local client configuration discovery with source-qualified selection, duplicate origins, portable MCP adapters, and Gemini A2A card imports with explicit remote inspection.
 
 ## 0.1.4 — 2026-11-04
 

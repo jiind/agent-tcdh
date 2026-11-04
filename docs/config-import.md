@@ -2,6 +2,8 @@
 
 Requires AgentTCDH `0.1.2` or later. From source, run `npm ci` and `npm run build` first; examples below use `node dist/index.js` from the repository root. An installed package uses `agent-tcdh` instead. See the [v0.1.2 release notes](releases/v0.1.2.md) for installation and publication checks.
 
+Source checkouts also provide [local client discovery](local-import.md) to locate known user/project settings and Gemini A2A definitions automatically. That command is not included in `0.1.4`; the explicit-file command below keeps its original behavior.
+
 ## Bring existing MCP connections into the registry
 
 Select an explicit source file. Importing never changes that file or scans personal configuration directories.
