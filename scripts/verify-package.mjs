@@ -55,6 +55,9 @@ try {
     assert.ok(files.has(required), "Local demo artifact is missing: " + required);
   }
   assert.ok(files.has("docs/releases/v" + manifest.version + ".md"), "Matching versioned release notes must be packaged.");
+  for (const required of ["dist/onboarding/local-import.js", "dist/onboarding/local-sources.js", "dist/onboarding/local-a2a.js", "docs/local-import.md"]) {
+    assert.ok(files.has(required), "Local client import artifact is missing: " + required);
+  }
   assert.equal([...files].some((file) => /^(src|test|node_modules|\.github)\//u.test(file) || /(^|\/)\.env(?:\.|$)|\.sqlite(?:$|-)/u.test(file)), false);
 
   // 2. Install production dependencies in isolation from the repository's development dependencies.
@@ -163,6 +166,28 @@ try {
   const marker = "package-" + randomUUID();
   await startServer();
   const initial = await verifyRuntime(url, credentials, marker);
+  // Inspect/import foreign MCP and A2A declarations using an isolated home and project, with production YAML parsing.
+  const localHome = join(directory, "foreign home");
+  const localProject = join(directory, "foreign project");
+  await mkdir(join(localProject, ".gemini", "agents"), { recursive: true });
+  await writeFile(join(localProject, ".mcp.json"), JSON.stringify({ mcpServers: { files: { command: process.execPath } } }));
+  await writeFile(join(localProject, ".gemini", "agents", "peer.md"), "---\nkind: remote\nname: peer\nagent_card_json: |\n  "
+    + JSON.stringify({ name: "Peer", description: "Packaged inline card", url: "https://peer.example/tasks", protocolVersion: "0.3.0",
+      preferredTransport: "JSONRPC", skills: [{ id: "research", description: "Research" }] }) + "\n---\n");
+  const localImportArgs = [...prefix, "registry", "import-local", "--home", localHome, "--project", localProject];
+  const discoveredLocal = await runCommand(executable, localImportArgs, { cwd: installation, env: environment });
+  const localPlan = JSON.parse(discoveredLocal.stdout);
+  assert.equal(localPlan.ready, true);
+  assert.equal(localPlan.converted, 2);
+  assert.equal(localPlan.metadataInspected, false);
+  assert.equal(localPlan.executionVerified, false);
+  const importedLocal = await runCommand(executable, [...localImportArgs, "--apply"], { cwd: installation, env: environment });
+  assert.equal(JSON.parse(importedLocal.stdout).result.inserted, 2);
+  for (const target of localPlan.targets) {
+    const saved = await runCommand(executable, [...prefix, "target", "get", target.id], { cwd: installation, env: environment });
+    assert.equal(JSON.parse(saved.stdout).protocol, target.protocol);
+    await runCommand(executable, [...prefix, "target", "remove", target.id], { cwd: installation, env: environment });
+  }
   const imported = await runCommand(executable, [...prefix, "registry", "import-config", clientSource, "--apply"], { cwd: installation, env: environment });
   assert.equal(JSON.parse(imported.stdout).applied, true);
   assert.equal(await readFile(clientSource, "utf8"), sourceContents);
@@ -284,7 +309,7 @@ try {
   assert.ok(demoResult.executions.some((entry) => entry.transport === "stdio"));
   assert.equal(demoResult.remainingTargets.length, 2);
   console.log(JSON.stringify({ package: manifest.filename, isolatedProductionInstall: true,
-    installedBinary: true, runtimeIdentity: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
+    installedBinary: true, runtimeIdentity: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, localClientImport: true, presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
 } finally {
   // 7. Clean up only the processes and temporary files created by this run.
   try {

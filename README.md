@@ -143,6 +143,10 @@ Version `0.1.4` adds `--version` (`-v`) for the package version, `--version --js
 
 Version `0.1.4` also supports `target refresh --all` to preview remote metadata updates across selected registrations; `--apply` saves changed definitions with per-target version checks. Filters, selection limits, bounded concurrency, skipped targets, and independent failures are reported. See [batch metadata refresh](docs/batch-refresh.md). Use repeated `--select ID` options with `doctor` or `target refresh` to process an explicit group without enumerating the catalog; see [explicit target selection](docs/target-selection.md). Version `0.1.3` does not include these additions.
 
+## Unreleased local connection import
+
+Source checkouts can discover existing MCP connections in Codex, Claude Code, OpenCode, Gemini CLI, Cursor, and VS Code configuration files, plus Gemini remote A2A definitions. `registry import-local` previews source-qualified selection keys and duplicate connections; `--select KEY` narrows the group and `--apply` registers it atomically. Remote A2A cards are fetched only with explicit `--fetch-a2a-cards`. See [local client import](docs/local-import.md) for source locations, credentials, limits, and client-specific scope. Published `0.1.4` does not contain this command.
+
 ## MCP discovery
 
 Connect your MCP client to `http://127.0.0.1:3000/mcp`.

@@ -36,6 +36,8 @@ agent-tcdh target get <ID> [--with-version] [--hub URL]
 agent-tcdh target list [--q QUERY] [--protocol mcp|a2a] [--tag TAG]
                      [--limit COUNT] [--offset OFFSET] [--include-disabled] [--hub URL]
 agent-tcdh target remove <ID> [--dry-run] [--if-match ETAG] [--hub URL]
+agent-tcdh registry import-local [--client CLIENT ...] [--scope all|user|project] [--home DIR] [--project DIR]
+                     [--select KEY ...] [--prefix PREFIX] [--fetch-a2a-cards] [--apply | --compare]
 agent-tcdh registry import-config <FILE> [--format FORMAT] [--select NAME ...] [--prefix PREFIX] [--apply | --compare] [--details]
 agent-tcdh preset list
 agent-tcdh preset show <NAME> [--select ID ...] [--compare] [--details]
@@ -51,6 +53,8 @@ The `--check FILE` connection mode, `disconnect`, `config backups`, and `config 
 Batch refresh and repeated `--select ID` selection for doctor/refresh require `0.1.4`; they are not included in `0.1.3`. See [explicit target selection](target-selection.md) for input order, complete-group validation, and disabled-state selection. See [batch metadata refresh](batch-refresh.md) for previews, independent conditional writes, and partial outcomes.
 
 The `--version`/`-v` flag and doctor runtime identity require `0.1.4`; they are also absent from `0.1.3`. See [local version and runtime](onboarding.md#local-version-and-runtime) for the JSON fields and configuration-independent behavior.
+
+`registry import-local` is an unreleased source addition, absent from `0.1.4`. See [local client discovery/import](local-import.md) for source paths, selection keys, duplicates, and opt-in A2A metadata requests.
 
 The default command is `serve`. Existing administrative commands print JSON; setup, edit/state, and comparison commands show readable terminal summaries with JSON when redirected or requested using `--json`; failures print diagnostics to stderr and exit with code 1. `target check` also prints failed/skipped reports as JSON and uses the exit codes below. Use `--help` for all options.
 

@@ -186,3 +186,7 @@ New setup/connection/diagnostic commands show readable summaries in a terminal. 
 ## Refresh matching remote registrations
 
 Version `0.1.4` supports `target refresh --all` previews and explicit `--apply` to save changed metadata. It uses the same bounded discovery selection as `doctor --all`, preserves managed labels/state, and reports per-target skips/failures. See [batch metadata refresh](batch-refresh.md); version `0.1.3` does not include this mode.
+
+## Bring existing connections from other AI clients
+
+Source checkouts add `registry import-local` to locate existing client settings, show origins/duplicates, and select connections for atomic registration. It supports MCP declarations and Gemini remote A2A definitions. See [local client import](local-import.md); published `0.1.4` does not include this command.
