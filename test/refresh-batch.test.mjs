@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 import { test } from "node:test";
 import { HubClient } from "../dist/client.js";
@@ -147,15 +146,28 @@ test("selection caps and inconsistent pages stop before target reads, metadata p
   assert.equal(writes, 0);
 });
 
-test("metadata concurrency is bounded and results retain discovery order", async (t) => {
+test("metadata concurrency is bounded and results retain discovery order", { timeout: 15_000 }, async (t) => {
   let active = 0;
   let peak = 0;
   let ordinal = 0;
+  const completed = [];
+  const first = Promise.withResolvers();
+  t.after(() => first.resolve());
   const source = await mcpSource(t, { forceCloseConnections: true, pages: [{ tools }], onList: async () => {
+    const index = ordinal++;
     active++;
     peak = Math.max(peak, active);
-    await setTimeout(ordinal++ === 0 ? 100 : 15);
-    active--;
+    // Hold one worker until the other has reached the final target, independent of runner speed.
+    try {
+      if (index === 0) {
+        await first.promise;
+      } else if (index === 4) {
+        first.resolve();
+      }
+      completed.push(index);
+    } finally {
+      active--;
+    }
   } });
   const app = await fixture(t);
   const hub = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -164,8 +176,26 @@ test("metadata concurrency is bounded and results retain discovery order", async
   }
   const client = new HubClient(hub);
   const expected = (await client.search({ limit: 100 })).items.map((target) => target.id);
-  const report = await refreshBatch(client, batchTargetOptionsSchema.parse({ concurrency: 2 }));
+  let reads = 0;
+  let peakReads = 0;
+  const monitored = {
+    search: (options) => client.search(options),
+    // Initial reads are dispatched before awaiting network responses, exposing excess workers reliably.
+    getVersioned: async (id) => {
+      reads++;
+      peakReads = Math.max(peakReads, reads);
+      try {
+        return await client.getVersioned(id);
+      } finally {
+        reads--;
+      }
+    },
+    update: (...args) => client.update(...args),
+  };
+  const report = await refreshBatch(monitored, batchTargetOptionsSchema.parse({ concurrency: 2 }));
+  assert.equal(peakReads, 2);
   assert.equal(peak, 2);
+  assert.deepEqual(completed, [1, 2, 3, 4, 0]);
   assert.deepEqual(report.targets.map((target) => target.id), expected);
   assert.equal(report.summary.planned, 5);
 });
