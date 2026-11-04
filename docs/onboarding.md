@@ -1,10 +1,10 @@
 # Guided setup, connection, and diagnostics
 
-Core setup requires AgentTCDH `0.1.2` or later; saved-profile checks, disconnection, backup discovery, and restoration require `0.1.3`. From a source checkout, run `npm ci` and `npm run build`, then replace `agent-tcdh` below with `node dist/index.js`. See the [v0.1.2 release notes](releases/v0.1.2.md) for installation and publication checks. The default suite uses temporary files and local protocol fixtures; it does not modify personal agent configuration or run models.
+Core setup requires AgentTCDH `0.1.2` or later; saved-profile checks, disconnection, backup discovery, and restoration require `0.1.3`; batch refresh, explicit target groups, and runtime identity require `0.1.4`. From a source checkout, run `npm ci` and `npm run build`, then replace `agent-tcdh` below with `node dist/index.js`. See the [v0.1.4 release notes](releases/v0.1.4.md) for installation and publication checks. The default suite uses temporary files and local protocol fixtures; it does not modify personal agent configuration or run models.
 
 ## Local version and runtime
 
-Source checkouts add `--version` (`-v`) and local runtime identity in diagnostics. Published `0.1.3` does not include these additions.
+Version `0.1.4` adds `--version` (`-v`) and local runtime identity in diagnostics. Version `0.1.3` does not include these additions.
 
 ```sh
 node dist/index.js --version
@@ -185,4 +185,4 @@ New setup/connection/diagnostic commands show readable summaries in a terminal. 
 
 ## Refresh matching remote registrations
 
-Source checkouts support unreleased `target refresh --all` previews and explicit `--apply` to save changed metadata. It uses the same bounded discovery selection as `doctor --all`, preserves managed labels/state, and reports per-target skips/failures. See [batch metadata refresh](batch-refresh.md); published `0.1.3` does not include this mode.
+Version `0.1.4` supports `target refresh --all` previews and explicit `--apply` to save changed metadata. It uses the same bounded discovery selection as `doctor --all`, preserves managed labels/state, and reports per-target skips/failures. See [batch metadata refresh](batch-refresh.md); version `0.1.3` does not include this mode.

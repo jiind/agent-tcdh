@@ -56,7 +56,7 @@ npm ci
 npm run demo
 ```
 
-Published [GitHub releases](https://github.com/jiind/agent-tcdh/releases) provide built tarballs, source manifests, and checksums. See the [v0.1.3 release notes](docs/releases/v0.1.3.md) for current source features, verification scope, and separate publication checks. Source commands below use the repository checkout; an installed CLI uses `agent-tcdh` in place of `npm run cli --` or `node dist/index.js`.
+Published [GitHub releases](https://github.com/jiind/agent-tcdh/releases) provide built tarballs, source manifests, and checksums. See the [v0.1.4 release notes](docs/releases/v0.1.4.md) for current source features, verification scope, and separate publication checks. Source commands below use the repository checkout; an installed CLI uses `agent-tcdh` in place of `npm run cli --` or `node dist/index.js`.
 
 The demo starts an isolated hub, registers three local targets, discovers them, and calls HTTP MCP, stdio MCP, and A2A targets directly. It checks execution receipts and cleans up. No account, API key, external service, or model is needed.
 
@@ -137,11 +137,11 @@ Version `0.1.3` adds the following commands. Version `0.1.2` does not include th
 - `config backups --file FILE` lists matching backup metadata by modification time and provides restore preview commands. See [backup discovery](docs/configuration-backups.md).
 - `config restore BACKUP_FILE --file FILE` previews whole-file recovery; `--apply` restores it and backs up the current file. See [configuration restoration](docs/configuration-restore.md).
 
-## Unreleased improvements
+## Batch operations and runtime identity in v0.1.4
 
-Source checkouts add `--version` (`-v`) for the package version, `--version --json` for local runtime identity, and the same information in `doctor` reports. These additions are not in the published `0.1.3` package. See [runtime and version diagnostics](docs/onboarding.md#local-version-and-runtime).
+Version `0.1.4` adds `--version` (`-v`) for the package version, `--version --json` for local runtime identity, and the same information in `doctor` reports. Version `0.1.3` does not include these additions. See [runtime and version diagnostics](docs/onboarding.md#local-version-and-runtime).
 
-Source checkouts additionally support `target refresh --all` to preview remote metadata updates across selected registrations; `--apply` saves changed definitions with per-target version checks. Filters, selection limits, bounded concurrency, skipped targets, and independent failures are reported. See [batch metadata refresh](docs/batch-refresh.md). Use repeated `--select ID` options with `doctor` or `target refresh` to process an explicit group without enumerating the catalog; see [explicit target selection](docs/target-selection.md). These additions are not in the published `0.1.3` package.
+Version `0.1.4` also supports `target refresh --all` to preview remote metadata updates across selected registrations; `--apply` saves changed definitions with per-target version checks. Filters, selection limits, bounded concurrency, skipped targets, and independent failures are reported. See [batch metadata refresh](docs/batch-refresh.md). Use repeated `--select ID` options with `doctor` or `target refresh` to process an explicit group without enumerating the catalog; see [explicit target selection](docs/target-selection.md). Version `0.1.3` does not include these additions.
 
 ## MCP discovery
 
@@ -237,7 +237,7 @@ Real-agent/model checks are also opt-in and can consume model usage. See [verifi
 - [Local demo](docs/local-demo.md)
 - [MCP/A2A agent registration compatibility](docs/agent-compatibility.md)
 - [Actual-agent verification](docs/agent-verification.md)
-- [v0.1.3 release notes](docs/releases/v0.1.3.md), [v0.1.2 release notes](docs/releases/v0.1.2.md), [changelog](CHANGELOG.md), and [release process](docs/releasing.md)
+- [v0.1.4 release notes](docs/releases/v0.1.4.md), [v0.1.3 release notes](docs/releases/v0.1.3.md), [v0.1.2 release notes](docs/releases/v0.1.2.md), [changelog](CHANGELOG.md), and [release process](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md) and [security policy](SECURITY.md)
 
 Project documentation, comments, and application messages use English. Original provider metadata and intentional Unicode fixtures retain their original text.

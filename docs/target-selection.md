@@ -1,6 +1,6 @@
 # Select an explicit group of targets
 
-This feature is unreleased and requires a source checkout containing repeated `--select ID` selection for diagnosis and metadata refresh. Published `0.1.3` does not include it.
+Repeated `--select ID` selection for diagnosis and metadata refresh requires AgentTCDH `0.1.4` or later. Version `0.1.3` does not include it.
 
 Use an explicit group to inspect or refresh only the registrations you name, including a subset that failed in a previous batch:
 
