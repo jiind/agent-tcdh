@@ -1,15 +1,16 @@
-# Import management release bundle — v0.1.5
+# Environment management release bundle — v0.1.6
 
-Accumulate the following related improvements before the next release. Individual implementation commits or PRs do not trigger npm/GitHub publication.
+Bundle the following related improvements into one publication. Individual commits or PRs do not trigger a release.
 
-- [x] Discover existing local MCP and Gemini A2A declarations (PR #24).
-- [x] Interactive connection selection in a terminal.
-- [x] Private reusable import profiles with explicit source locations and selectors.
-- [x] Source tracking and conditional synchronization, including previewed optional pruning.
-- [x] Optional post-import metadata refresh and diagnosis with per-target outcomes.
-- [x] Registry-wide duplicate inspection and explicitly selected conditional removal.
-- [x] Explicit consumer-side stdio metadata inspection with process cleanup and bounded resources.
-Release gate: regression, installed-package, Linux/macOS/Windows, and container verification of the complete flow.
-Publication gate: versioned release notes, exact-artifact verification, and one bundled publication. See the [release notes](releases/v0.1.5.md) and the linked GitHub Actions results for actual verification/publication status.
+- [x] Private named hub profiles with read/admin credential references and explicit activation.
+- [x] Import-profile selection and source-location editing while retaining ownership.
+- [x] Unified registry, source-drift, environment, and stored-metadata status.
+- [x] Revision-bound freshness with explicit stale-target inspection and optional refresh.
+- [x] Transactional bounded registry history and guarded single-target undo.
+- [x] Guided source selection, registration, profile saving, and explicit consumer connection output.
 
-The hub remains a discovery registry. CLI inspection happens in the consuming environment; tool/task execution and model decisions remain with consumers. Local source files and credential values are not uploaded as synchronization state.
+Release gate: typecheck/regression, installed-package coverage of all six workflows, native Linux/macOS/Windows, and container verification. Publication gate: normal protected PR merge, exact-artifact verification, versioned release notes, GitHub release, and public npm installation verification. Actual results belong in the release evidence, not inferred from these implementation checkboxes.
+
+Next candidates, outside this bundle: additional client adapters/profile locations and optional source-change notifications. The completed v0.1.5 import-management bundle is described in [its release notes](releases/v0.1.5.md).
+
+The hub stays a capability/connection registry. Provider inspection runs only in an explicitly authorized consumer process; tools and A2A tasks remain direct consumer execution.

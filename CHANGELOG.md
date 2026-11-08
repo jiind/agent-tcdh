@@ -4,6 +4,16 @@
 
 No changes yet.
 
+## 0.1.6 — 2026-11-08
+
+- Add private named hub profiles with isolated credential references and explicit activation.
+- Add previewed import-profile selection/project/source-path edits while preserving managed ownership.
+- Add unified registry/source/environment status and revision-bound consumer metadata observations with stale-target selection and optional refresh.
+- Add transactional bounded registry history and version-guarded undo, including deletion/recreation protection.
+- Add guided consumer setup composing selection, registration, profiles, and explicit client-file output.
+
+SQLite schema 3 migrates existing versions 0–2; snapshot format 1 and direct MCP/A2A discovery remain compatible. Back up the database before upgrading. See [v0.1.6 release notes](docs/releases/v0.1.6.md) and the [management guide](docs/environment-management.md).
+
 ## 0.1.5 — 2026-11-04
 
 - Add bounded local client configuration discovery with source-qualified selection, duplicate origins, portable MCP adapters, and Gemini A2A card imports with explicit remote inspection.

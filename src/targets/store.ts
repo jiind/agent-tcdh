@@ -1,3 +1,4 @@
+import { RegistryActivity } from "../registry/activity.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +13,7 @@ import type { EntityCondition, VersionedTarget } from "./version.js";
 /** Persist target metadata in SQLite and provide filtered, ranked, paginated discovery. */
 export class TargetStore {
   private readonly database: DatabaseSync;
+  readonly activity: RegistryActivity;
 
   /** Prepare the storage directory and connection and validate the schema version. */
   constructor(path: string) {
@@ -25,7 +27,7 @@ export class TargetStore {
     try {
       this.database.exec("PRAGMA busy_timeout = 5000");
       const initialVersion = Number(this.database.prepare("PRAGMA user_version").get()?.user_version);
-      if (![0, 1, 2].includes(initialVersion)) {
+      if (![0, 1, 2, 3].includes(initialVersion)) {
         throw new Error("Unsupported database schema version.");
       }
       this.database.exec("PRAGMA journal_mode = WAL");
@@ -33,7 +35,7 @@ export class TargetStore {
       // 3. Recheck the version under a write lock and prepare revision storage.
       this.database.exec("BEGIN IMMEDIATE");
       const version = Number(this.database.prepare("PRAGMA user_version").get()?.user_version);
-      if (![0, 1, 2].includes(version)) {
+      if (![0, 1, 2, 3].includes(version)) {
         throw new Error("Unsupported database schema version.");
       }
       this.database.exec(`
@@ -49,7 +51,7 @@ export class TargetStore {
       `);
       const columns = this.database.prepare("PRAGMA table_info(targets)").all();
       if (!columns.some((column) => column.name === "revision")) {
-        if (version === 2) {
+        if (version >= 2) {
           throw new Error("Invalid database schema: target revision column is missing.");
         }
         this.database.exec("ALTER TABLE targets ADD COLUMN revision TEXT NOT NULL DEFAULT ''");
@@ -62,7 +64,8 @@ export class TargetStore {
           update.run(randomUUID(), String(row.id));
         }
       }
-      this.database.exec("PRAGMA user_version = 2");
+      this.activity = new RegistryActivity(this.database);
+      this.database.exec("PRAGMA user_version = 3");
       this.database.exec("COMMIT");
     } catch (error) {
       if (this.database.isTransaction) {
@@ -71,6 +74,19 @@ export class TargetStore {
       this.database.close();
       throw error;
     }
+  }
+
+  /** Invert a guarded event using the same mutation paths as normal registry administration. */
+  undoHistory(id: number, apply: boolean) {
+    return this.activity.undo(id, apply, (targetId, before, exists) => {
+      if (before === null) {
+        this.remove(targetId);
+      } else if (exists) {
+        this.update(targetId, before);
+      } else {
+        this.create(before);
+      }
+    });
   }
 
   /** Close the database connection and prepared statements. */

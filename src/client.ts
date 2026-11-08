@@ -1,3 +1,5 @@
+import type { z } from "zod";
+import type { RegistryActivity, freshnessQuerySchema, historyQuerySchema, observationSchema } from "./registry/activity.js";
 import type { SearchOptions, SearchResult, Target, TargetDefinition } from "./targets/schema.js";
 import type { ImportOptions, ImportResult, RegistrySnapshot } from "./registry/schema.js";
 import { hubTokenSchema } from "./auth.js";
@@ -71,6 +73,17 @@ export class HubClient {
     return this.request<Target>("api/targets/" + encodeURIComponent(id), "PUT", target, ifMatch);
   }
 
+  /** Replace a definition and return the exact committed revision for subsequent observation recording. */
+  async updateVersioned(id: string, target: TargetDefinition, ifMatch: string): Promise<VersionedTarget> {
+    const response = await this.send("api/targets/" + encodeURIComponent(id), "PUT", target, ifMatch);
+    const etag = response.headers.get("etag");
+    const condition = parseIfMatch(etag ?? undefined);
+    if (condition?.kind !== "tags" || condition.tags.length !== 1 || entityTag(condition.tags[0]!) !== etag) {
+      throw new Error("The hub did not provide a valid committed version. The update may already have completed.");
+    }
+    return { target: await response.json() as Target, etag };
+  }
+
   /** Remove a target from the registry. */
   async remove(id: string, ifMatch?: string): Promise<void> {
     await this.request<void>("api/targets/" + encodeURIComponent(id), "DELETE", undefined, ifMatch);
@@ -87,6 +100,32 @@ export class HubClient {
       onConflict: options.onConflict, dryRun: String(options.dryRun),
     });
     return this.request<ImportResult>("api/registry/import?" + query.toString(), "POST", snapshot);
+  }
+
+  /** Read retained administrator change summaries. */
+  async history(query: z.infer<typeof historyQuerySchema>) {
+    const params = new URLSearchParams(Object.entries(query).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)] as [string, string]));
+    return this.request<ReturnType<RegistryActivity["history"]>>("api/registry/history?" + params);
+  }
+
+  /** Retrieve full definitions for one retained administrator event. */
+  async historyEvent(id: number) {
+    return this.request<Omit<ReturnType<RegistryActivity["event"]>, "afterRevision">>("api/registry/history/" + id);
+  }
+
+  /** Preview or conditionally apply the inverse of the latest change. */
+  async undoHistory(id: number, apply = false) {
+    return this.request<ReturnType<RegistryActivity["undo"]>>("api/registry/history/" + id + "/undo", "POST", { apply });
+  }
+
+  /** Read revision-bound metadata observations without inspecting providers. */
+  async freshness(query: z.infer<typeof freshnessQuerySchema>) {
+    return this.request<ReturnType<RegistryActivity["freshness"]>>("api/registry/freshness?" + new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)] as [string, string])));
+  }
+
+  /** Persist a consumer metadata result against its exact observed definition. */
+  async observe(id: string, observation: z.infer<typeof observationSchema>, etag: string) {
+    return this.request<ReturnType<RegistryActivity["observe"]>>("api/targets/" + encodeURIComponent(id) + "/observation", "POST", observation, etag);
   }
 
   /** Decode a shared HTTP response into the requested result type. */

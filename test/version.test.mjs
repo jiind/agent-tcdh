@@ -159,7 +159,7 @@ test("database migration preserves definitions, timestamps, and persistent revis
   assert.deepEqual(second.getVersioned("legacy"), current);
   second.close();
   const database = new DatabaseSync(path);
-  assert.equal(database.prepare("PRAGMA user_version").get().user_version, 2);
+  assert.equal(database.prepare("PRAGMA user_version").get().user_version, 3);
   database.close();
 });
 

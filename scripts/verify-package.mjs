@@ -62,6 +62,10 @@ try {
     "dist/onboarding/import-follow-up.js", "dist/onboarding/import-workflow.js", "dist/registry/duplicates.js", "dist/stdio-inspect.js", "docs/import-management.md"]) {
     assert.ok(files.has(required), "Import-management artifact is missing: " + required);
   }
+  for (const required of ["dist/onboarding/hub-profiles.js", "dist/onboarding/import-profile-edit.js", "dist/onboarding/status.js",
+    "dist/onboarding/setup.js", "dist/targets/observe.js", "dist/registry/activity.js", "docs/environment-management.md"]) {
+    assert.ok(files.has(required), "Environment-management artifact is missing: " + required);
+  }
   assert.equal([...files].some((file) => /^(src|test|node_modules|\.github)\//u.test(file) || /(^|\/)\.env(?:\.|$)|\.sqlite(?:$|-)/u.test(file)), false);
 
   // 2. Install production dependencies in isolation from the repository's development dependencies.
@@ -231,6 +235,54 @@ try {
     { cwd: installation, env: environment });
   assert.equal(JSON.parse(cleaned.stdout).outcomes[0].status, "removed");
   await runCommand(executable, [...prefix, "target", "remove", "package-keep"], { cwd: installation, env: environment });
+  // Verify the complete environment-management bundle through the installed public CLI with isolated stores.
+  const hubProfiles = join(directory, "hub-profiles.json");
+  const managementProfiles = join(directory, "management-imports.json");
+  const managedProject = join(directory, "management project");
+  const managedConsumer = join(directory, "management-consumer.toml");
+  await mkdir(join(managedProject, ".cursor"), { recursive: true });
+  await writeFile(join(managedProject, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { observed: foreignCommand } }));
+  /** Run an installed management command without reading or writing contributor client settings. */
+  async function management(args) {
+    const result = await runCommand(executable, [...prefix, ...args], { cwd: installation, env: environment });
+    return JSON.parse(result.stdout);
+  }
+  const hubFlags = ["--hub-profile", "packaged-work", "--hub-profiles-file", hubProfiles];
+  assert.equal((await management(["hub-profile", "save", "packaged-work", "--hub", url,
+    "--token-env", "AGENT_TCDH_TOKEN", "--read-token-env", "AGENT_TCDH_READ_TOKEN", "--hub-profiles-file", hubProfiles, "--apply"])).applied, true);
+  await management(["hub-profile", "use", "packaged-work", "--hub-profiles-file", hubProfiles, "--apply"]);
+  const setupArgs = ["setup", ...hubFlags, "--yes", "--client", "codex", "--home", localHome, "--project", managedProject,
+    "--scope", "project", "--select", "cursor-project/observed", "--save-profile", "packaged-management", "--profiles-file", managementProfiles,
+    "--write", managedConsumer];
+  assert.equal((await management(setupArgs)).applied, false);
+  const guided = await management([...setupArgs, "--apply"]);
+  assert.equal(guided.applied, true);
+  assert.equal(guided.connection.changed, true);
+  const observedId = guided.registration.targets[0].id;
+  const profileEdit = ["import-profile", "edit", "packaged-management", "--profiles-file", managementProfiles, "--all-sources"];
+  assert.equal((await management(profileEdit)).applied, false);
+  assert.equal((await management([...profileEdit, "--apply"])).registryChanged, false);
+  assert.equal((await management(["target", "freshness", ...hubFlags])).items.find((item) => item.id === observedId).state, "unknown");
+  const observation = await management(["target", "observe", "--select", observedId, ...hubFlags, "--apply", "--refresh", "--inspect-stdio"]);
+  assert.equal(observation.outcomes[0].recorded, true);
+  assert.equal(observation.outcomes[0].status, "passed");
+  const overall = await management(["status", ...hubFlags, "--profiles-file", managementProfiles]);
+  assert.equal(overall.failed, false);
+  assert.equal(overall.providerRequests, false);
+  assert.equal(overall.freshness.items.find((item) => item.id === observedId).state, "fresh");
+  const activity = await management(["registry", "history", "--target", observedId, ...hubFlags]);
+  assert.ok(activity.items.length >= 2);
+  const sequence = String(activity.items[0].id);
+  assert.equal((await management(["registry", "history", "undo", sequence, ...hubFlags])).applied, false);
+  assert.equal((await management(["registry", "history", "undo", sequence, ...hubFlags, "--apply"])).applied, true);
+  await management(["target", "remove", observedId, ...hubFlags]);
+  const removalEvent = (await management(["registry", "history", "--target", observedId, ...hubFlags])).items[0];
+  assert.equal(removalEvent.action, "delete");
+  assert.equal((await management(["registry", "history", "undo", String(removalEvent.id), ...hubFlags, "--apply"])).applied, true);
+  await management(["target", "remove", observedId, ...hubFlags]);
+  await management(["import-profile", "remove", "packaged-management", "--profiles-file", managementProfiles, "--apply"]);
+  await management(["hub-profile", "remove", "packaged-work", "--hub-profiles-file", hubProfiles, "--apply"]);
+
   const imported = await runCommand(executable, [...prefix, "registry", "import-config", clientSource, "--apply"], { cwd: installation, env: environment });
   assert.equal(JSON.parse(imported.stdout).applied, true);
   assert.equal(await readFile(clientSource, "utf8"), sourceContents);
@@ -353,6 +405,7 @@ try {
   assert.equal(demoResult.remainingTargets.length, 2);
   console.log(JSON.stringify({ package: manifest.filename, isolatedProductionInstall: true,
     installedBinary: true, runtimeIdentity: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, localClientImport: true,
+    hubProfiles: true, importProfileEditing: true, unifiedStatus: true, metadataFreshness: true, registryHistoryUndo: true, guidedSetup: true,
     importProfiles: true, sourceSynchronization: true, importFollowUp: true, stdioMetadata: true, duplicateCleanup: true,
     presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
 } finally {
