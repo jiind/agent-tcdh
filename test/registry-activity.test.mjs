@@ -151,3 +151,18 @@ test("competing undo requests have one winner and metadata APIs are documented w
   assert.equal(paths["/api/registry/freshness"].get["x-required-role"], "read");
   assert.equal(paths["/api/targets/{id}/observation"].post["x-required-role"], "admin");
 });
+
+test("zero-hour freshness remains stale when JS time trails SQLite time slightly", () => {
+  const store = new TargetStore(":memory:");
+  const target = store.createVersioned(targetDefinitionSchema.parse(definition()));
+  const observed = store.activity.observe("docs", target.etag, { status: "passed", scope: "metadata", executionVerified: false });
+  const original = Date.now;
+  try {
+    Date.now = () => Date.parse(observed.checkedAt) - 15;
+    assert.equal(store.activity.freshness({ staleHours: 0, limit: 1, offset: 0 }).items[0].state, "stale");
+    assert.equal(store.activity.freshness({ staleHours: 24, limit: 1, offset: 0 }).items[0].state, "fresh");
+  } finally {
+    Date.now = original;
+    store.close();
+  }
+});

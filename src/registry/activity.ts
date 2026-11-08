@@ -132,7 +132,7 @@ export class RegistryActivity {
       items: rows.map((row) => ({ id: String(row.id), enabled: Boolean(row.enabled), etag: entityTag(String(row.revision)),
         checkedAt: row.checked_at ?? null, status: row.status ?? "unknown", source: "consumer-report",
         state: row.checked_at === null ? "unknown" : row.revision !== row.observed_revision ? "changed"
-          : now - Date.parse(String(row.checked_at)) >= query.staleHours * 3600000 ? "stale" : "fresh",
+          : Math.max(0, now - Date.parse(String(row.checked_at))) >= query.staleHours * 3600000 ? "stale" : "fresh",
         executionVerified: false })), limit: query.limit, offset: query.offset };
   }
 }
