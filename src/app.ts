@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { freshnessQuerySchema, historyIdSchema, historyQuerySchema, observationSchema } from "./registry/activity.js";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import { ZodError } from "zod";
 import { HubError } from "./errors.js";
@@ -7,7 +9,7 @@ import { registerHttpDiscovery } from "./mcp-http.js";
 import { createOpenApiDocument } from "./openapi.js";
 import { importQuerySchema, MAX_SNAPSHOT_BYTES, parseSnapshot } from "./registry/schema.js";
 import { hubAuthSchema, registerAccessControl } from "./auth.js";
-import { parseIfMatch } from "./targets/version.js";
+import { entityTag, parseIfMatch } from "./targets/version.js";
 import { publicUrlSchema, registerA2aDiscovery } from "./a2a-http.js";
 
 export interface AppOptions {
@@ -75,6 +77,27 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   });
   app.post("/api/registry/import", { bodyLimit: MAX_SNAPSHOT_BYTES, config: { access: "admin" } }, async (request) => {
     return store.importSnapshot(parseSnapshot(request.body), importQuerySchema.parse(request.query));
+  });
+  app.get("/api/registry/history", { config: { access: "admin" } }, async (request) => {
+    return store.activity.history(historyQuerySchema.parse(request.query));
+  });
+  app.get<{ Params: { id: string } }>("/api/registry/history/:id", { config: { access: "admin" } }, async (request) => {
+    const { afterRevision: _revision, ...event } = store.activity.event(historyIdSchema.parse(request.params.id));
+    return event;
+  });
+  app.post<{ Params: { id: string } }>("/api/registry/history/:id/undo", { config: { access: "admin" } }, async (request) => {
+    const body = z.object({ apply: z.boolean().default(false) }).strict().parse(request.body);
+    return store.undoHistory(historyIdSchema.parse(request.params.id), body.apply);
+  });
+  app.get("/api/registry/freshness", { config: { access: "read" } }, async (request) => {
+    return store.activity.freshness(freshnessQuerySchema.parse(request.query));
+  });
+  app.post<{ Params: { id: string } }>("/api/targets/:id/observation", { config: { access: "admin" } }, async (request) => {
+    const condition = parseIfMatch(request.headers["if-match"]);
+    if (condition?.kind !== "tags" || condition.tags.length !== 1) {
+      throw new HubError(400, "OBSERVATION_VERSION_REQUIRED", "Provide a single strong If-Match target version.");
+    }
+    return store.activity.observe(targetIdSchema.parse(request.params.id), entityTag(condition.tags[0]!), observationSchema.parse(request.body));
   });
   app.post("/api/targets", { config: { access: "admin" } }, async (request, reply) => {
     const result = store.createVersioned(targetDefinitionSchema.parse(request.body));

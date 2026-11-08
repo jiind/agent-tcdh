@@ -14,6 +14,18 @@ const help = `AgentTCDH — Agent & Tool Capability Discovery Hub
 
 Usage:
   agent-tcdh --version [--json]
+  agent-tcdh hub-profile list|show|save|use|remove|clear [NAME] [--hub URL] [--apply]
+                       [--hub-profiles-file FILE] [--token-env NAME] [--read-token-env NAME]
+  agent-tcdh status [--hub-profile NAME] [--profiles-file FILE] [--stale-hours HOURS] [--limit COUNT]
+  agent-tcdh setup [--client CLIENT] [--yes] [--apply] [--write FILE] [--replace]
+                       [--select KEY ...] [--save-profile NAME] [--home DIR] [--project DIR]
+  agent-tcdh import-profile edit NAME [--select KEY ... | --all-sources] [--project DIR]
+                       [--source-path SOURCE_ID=PATH ...] [--profiles-file FILE] [--apply]
+  agent-tcdh registry history [--target ID] [--before SEQUENCE] [--limit COUNT]
+  agent-tcdh registry history show|undo SEQUENCE [--apply]
+  agent-tcdh target freshness [--stale-hours HOURS] [--limit COUNT] [--offset COUNT]
+  agent-tcdh target observe [--all | --select ID ...] [--stale-only] [--stale-hours HOURS]
+                       [--apply] [--inspect-stdio] [--stdio-cwd DIR] [--limit COUNT]
   agent-tcdh init [--yes] [--config FILE] [--hub URL] [--host HOST] [--port PORT] [--db FILE]
   agent-tcdh connect <CLIENT> [--print | --write FILE | --check FILE] [--dry-run] [--replace]
                        CLIENT: codex, opencode, opencode-v1, claude-code, gemini-cli, cursor, vscode
@@ -161,6 +173,13 @@ export async function runCli(args: string[]): Promise<void> {
       profile: { type: "string" },
       "save-profile": { type: "string" },
       "profiles-file": { type: "string" },
+      "hub-profile": { type: "string" },
+      "hub-profiles-file": { type: "string" },
+      "all-sources": { type: "boolean" },
+      "source-path": { type: "string", multiple: true },
+      "stale-hours": { type: "string" },
+      "stale-only": { type: "boolean" },
+      before: { type: "string" },
       prune: { type: "boolean" },
       refresh: { type: "boolean" },
       diagnose: { type: "boolean" },
@@ -293,12 +312,30 @@ export async function runCli(args: string[]): Promise<void> {
       + "\n" + result.instructions);
     return;
   }
+  if (command === "hub-profile") {
+    const action = positionals[1] ?? "";
+    validateArguments(positionals, ["list", "clear"].includes(action) ? 2 : 3, values,
+      ["hub-profiles-file", ...(["list", "show"].includes(action) ? [] : ["apply"]),
+        ...(action === "save" ? ["hub", "token-env", "read-token-env"] : [])]);
+    if (values.config !== undefined) {
+      throw new Error("Hub-profile management uses --hub-profiles-file, not --config.");
+    }
+    const { manageHubProfile } = await import("./onboarding/hub-profiles.js");
+    if (values["hub-profile"]) {
+      throw new Error("Hub-profile management does not accept --hub-profile.");
+    }
+    const result = await manageHubProfile(action, positionals[2], values["hub-profiles-file"],
+      { hub: values.hub, tokenEnv: values["token-env"], readTokenEnv: values["read-token-env"] }, values.apply);
+    printJson(result);
+    return;
+  }
   if (command === "import-profile") {
     const action = positionals[1];
-    if (!["list", "show", "remove"].includes(action ?? "")) {
-      throw new Error("Use import-profile list, show NAME, or remove NAME.");
+    if (!["list", "show", "remove", "edit"].includes(action ?? "")) {
+      throw new Error("Use import-profile list, show NAME, edit NAME, or remove NAME.");
     }
-    validateArguments(positionals, action === "list" ? 2 : 3, values, ["profiles-file", ...(action === "remove" ? ["apply"] : [])]);
+    validateArguments(positionals, action === "list" ? 2 : 3, values, ["profiles-file", ...(action === "remove" ? ["apply"] : []),
+      ...(action === "edit" ? ["select", "all-sources", "project", "source-path", "apply"] : [])]);
     if (values.config !== undefined) {
       throw new Error("Import-profile management does not use hub setup. Select --profiles-file instead.");
     }
@@ -312,6 +349,14 @@ export async function runCli(args: string[]): Promise<void> {
     const name = importProfileNameSchema.parse(positionals[2]);
     if (!Object.hasOwn(loaded.store.profiles, name)) {
       throw new Error("Import profile not found.");
+    }
+    if (action === "edit") {
+      const { editImportProfile } = await import("./onboarding/import-profile-edit.js");
+      const result = await editImportProfile(name, loaded.path, { select: values.select, allSources: values["all-sources"],
+        project: values.project, sourcePaths: values["source-path"], apply: values.apply });
+      printJson(result);
+      process.exitCode = result.ready ? 0 : 1;
+      return;
     }
     if (action === "show") {
       printJson({ path: loaded.path, name, profile: loaded.store.profiles[name] });
@@ -332,8 +377,42 @@ export async function runCli(args: string[]): Promise<void> {
   }
   const boundProfile = command === "registry" && ["import-local", "sync-local"].includes(positionals[1] ?? "") && values.profile
     ? await (await import("./onboarding/import-profiles.js")).readImportProfile(values.profile, values["profiles-file"]) : undefined;
-  const config = values["no-config"] || boundProfile && values.config === undefined ? undefined : await loadConfig(values.config);
-  const hub = values.hub ?? boundProfile?.hub ?? process.env.AGENT_TCDH_URL ?? config?.hub ?? "http://127.0.0.1:3000";
+  if (values["hub-profile"] && (boundProfile || values.config || values["no-config"] || command === "serve")) {
+    throw new Error("An explicit hub profile cannot override an import profile, --config, --no-config, or serve.");
+  }
+  const useHubProfiles = values["hub-profile"] !== undefined || !boundProfile && !values.config && !values["no-config"]
+    && !values.hub && !process.env.AGENT_TCDH_URL && command !== "serve";
+  const selectedHub = useHubProfiles
+    ? await (await import("./onboarding/hub-profiles.js")).resolveHubProfile(values["hub-profile"], values["hub-profiles-file"]) : undefined;
+  if (selectedHub && values.hub && (await import("./onboarding/config.js")).normalizeHub(values.hub) !== selectedHub.hub) {
+    throw new Error("Explicit --hub conflicts with the selected hub profile.");
+  }
+  const loadedConfig = values["no-config"] || (boundProfile || selectedHub) && values.config === undefined ? undefined : await loadConfig(values.config);
+  const config = selectedHub ? { formatVersion: 1 as const, mode: "remote" as const, hub: selectedHub.hub,
+    server: { host: "127.0.0.1", port: 3000, dbPath: "registry.sqlite" },
+    ...(selectedHub.tokenEnv ? { tokenEnv: selectedHub.tokenEnv } : {}),
+    ...(selectedHub.readTokenEnv ? { readTokenEnv: selectedHub.readTokenEnv } : {}) } : loadedConfig;
+  const hub = values.hub ?? boundProfile?.hub ?? selectedHub?.hub ?? process.env.AGENT_TCDH_URL ?? config?.hub ?? "http://127.0.0.1:3000";
+  const consumerReference = values["token-env"] ?? consumerTokenEnv(config, selectedHub ? {} : process.env);
+  if (command === "status") {
+    validateArguments(positionals, 1, values, ["hub", "profiles-file", "stale-hours", "limit"]);
+    const { freshnessQuerySchema } = await import("./registry/activity.js");
+    const selection = freshnessQuerySchema.parse({ staleHours: values["stale-hours"], limit: values.limit ?? 1000 });
+    const { managementStatus } = await import("./onboarding/status.js");
+    const result = await managementStatus({ hub, tokenEnv: consumerReference, profilesFile: values["profiles-file"],
+      staleHours: selection.staleHours, limit: selection.limit, hubProfile: selectedHub?.name },
+      selectedHub && !consumerReference ? { ...process.env, AGENT_TCDH_TOKEN: undefined } : process.env);
+    printOnboarding(result, values.json, () => "Hub: " + JSON.stringify(result.hub)
+      + "\n" + result.checks.map((check) => check.status.toUpperCase() + " " + check.section + ": " + check.message).join("\n")
+      + ("counts" in result && result.counts ? "\nRegistrations: " + result.counts.total + " (" + result.counts.enabled + " enabled, " + result.counts.disabled + " disabled)" : "")
+      + ("profiles" in result ? "\n" + result.profiles.map((profile) => "Source profile " + JSON.stringify(profile.name) + ": " + profile.status
+        + (profile.changes ? " " + JSON.stringify(profile.changes) : " " + profile.issue)).join("\n") : "")
+      + ("variables" in result ? "\n" + result.variables.map((variable) => (variable.available ? "AVAILABLE " : "MISSING ") + variable.name).join("\n") : "")
+      + ("freshness" in result && result.freshness ? "\nMetadata: " + result.freshness.items.map((item) => item.id + " " + item.state + "/" + item.status).join(", ") : "")
+      + "\nNo target providers contacted; execution not verified.");
+    process.exitCode = result.failed ? 1 : 0;
+    return;
+  }
 
   // 3. Generate consumer settings and run read-only diagnostics before requiring administration credentials.
   if (command === "connect") {
@@ -344,7 +423,7 @@ export async function runCli(args: string[]): Promise<void> {
     if (values.check !== undefined) {
       const { checkConnection } = await import("./onboarding/connect.js");
       const result = await checkConnection({ client: positionals[1]!, hub, file: values.check,
-        tokenEnv: values["token-env"] ?? consumerTokenEnv(config), name: values.name });
+        tokenEnv: consumerReference, name: values.name });
       printOnboarding(result, values.json, () => result.status.toUpperCase() + " " + result.reason + ": " + JSON.stringify(result.path)
         + (result.differingFields.length ? "\nDiffering fields: " + result.differingFields.join(", ") : "")
         + "\n" + result.action + "\n" + result.scope);
@@ -356,7 +435,7 @@ export async function runCli(args: string[]): Promise<void> {
     }
     const { connectClient } = await import("./onboarding/connect.js");
     const result = await connectClient({ client: positionals[1]!, hub,
-      tokenEnv: values["token-env"] ?? consumerTokenEnv(config), write: values.write,
+      tokenEnv: consumerReference, write: values.write,
       replace: values.replace, name: values.name, dryRun: values["dry-run"],
     });
     if (values.print) {
@@ -382,7 +461,8 @@ export async function runCli(args: string[]): Promise<void> {
       includeDisabled: values["include-disabled"], limit: values.limit === undefined ? undefined : Number(values.limit),
       concurrency: values.concurrency === undefined ? undefined : Number(values.concurrency) }) : undefined;
     const { diagnose } = await import("./onboarding/doctor.js");
-    const result = await diagnose({ hub, tokenEnv: values["token-env"] ?? consumerTokenEnv(config), target: values.target === undefined ? undefined : targetIdSchema.parse(values.target), batch });
+    const result = await diagnose({ hub, tokenEnv: consumerReference, target: values.target === undefined ? undefined : targetIdSchema.parse(values.target), batch },
+      selectedHub && !consumerReference ? { ...process.env, AGENT_TCDH_TOKEN: undefined, AGENT_TCDH_READ_TOKEN: undefined } : process.env);
     printOnboarding(result, values.json, () => "AgentTCDH " + result.runtime.version + " | Node.js " + result.runtime.node
       + " | " + result.runtime.platform + "/" + result.runtime.arch + "\n"
       + result.checks.map((check) => check.status.toUpperCase() + " " + check.id + ": " + check.message
@@ -416,25 +496,86 @@ export async function runCli(args: string[]): Promise<void> {
   }
 
   // 5. Share the authenticated registry API with existing CLI and MCP commands.
-  if (!["mcp", "target", "registry", "preset"].includes(command)) {
+  if (!["mcp", "target", "registry", "preset", "setup"].includes(command)) {
     throw new Error("Unknown command. Run --help for usage.");
   }
-  const metadataPreview = !values.compare && (command === "target" && ["add", "import"].includes(positionals[1] ?? "") && values["dry-run"]
+  const metadataPreview = !values.compare && (command === "setup" && !values.apply || command === "target" && ["add", "import"].includes(positionals[1] ?? "") && values["dry-run"]
     || command === "registry" && ["import-config", "import-local"].includes(positionals[1] ?? "") && !values.apply
     || command === "preset" && (positionals[1] !== "import" || !values.apply));
   const readCommand = command === "registry" && (["sync-local", "duplicates"].includes(positionals[1] ?? "") && !values.apply || positionals[1] === "diff" || ["import-config", "import-local"].includes(positionals[1] ?? "") && values.compare)
     || command === "preset" && ["show", "import"].includes(positionals[1] ?? "") && values.compare
-    || command === "mcp" || command === "target" && (positionals[1] === "inspect-stdio" && !values.apply || ["list", "get", "check"].includes(positionals[1] ?? "")
+    || command === "mcp" || command === "target" && (positionals[1] === "inspect-stdio" && !values.apply || ["list", "get", "check", "freshness"].includes(positionals[1] ?? "")
+    || positionals[1] === "observe" && !values.apply
     || positionals[1] === "refresh" && (values.all || values.select !== undefined) && !values.apply
     || ["refresh", "edit", "enable", "disable", "remove"].includes(positionals[1] ?? "") && values["dry-run"]);
   const credentialDefaults = boundProfile ?? config;
   if (!readCommand && !metadataPreview && !values["token-env"] && credentialDefaults?.readTokenEnv && !credentialDefaults.tokenEnv
-    && (boundProfile !== undefined || !process.env.AGENT_TCDH_TOKEN)) {
+    && (boundProfile !== undefined || selectedHub !== undefined || !process.env.AGENT_TCDH_TOKEN)) {
     throw new Error("This setup has only read credentials. Select an administrator credential with --token-env for mutations.");
   }
   const clientTokenEnv = values["token-env"] ?? (metadataPreview ? undefined : readCommand ? credentialDefaults?.readTokenEnv ?? credentialDefaults?.tokenEnv : credentialDefaults?.tokenEnv);
-  const client = new HubClient(hub, values.anonymous || metadataPreview && values["token-env"] === undefined ? undefined
+  const client = new HubClient(hub, values.anonymous || selectedHub && !clientTokenEnv || metadataPreview && values["token-env"] === undefined ? undefined
     : readClientToken(clientTokenEnv, clientTokenEnv !== undefined));
+  if (command === "setup") {
+    validateArguments(positionals, 1, values, ["hub", "client", "yes", "apply", "write", "replace", "select", "save-profile", "profiles-file", "home", "project", "scope"]);
+    if (values.client && values.client.length !== 1 || values.replace && !values.write) {
+      throw new Error("Setup takes exactly one consumer --client; --replace requires an explicit --write FILE.");
+    }
+    const { setupConsumer } = await import("./onboarding/setup.js");
+    const result = await setupConsumer(client, hub, { client: values.client?.[0], yes: values.yes, apply: values.apply,
+      write: values.write, replace: values.replace, select: values.select, saveProfile: values["save-profile"],
+      profilesFile: values["profiles-file"], home: values.home, project: values.project, scope: values.scope as "user" | "project" | "all" | undefined,
+      tokenEnv: values["token-env"] ?? config?.tokenEnv, readTokenEnv: config?.readTokenEnv });
+    printOnboarding(result, values.json, () => (result.applied ? "Setup applied." : "cancelled" in result ? "Setup cancelled." : "Setup preview; no changes applied.")
+      + ("registration" in result ? "\nSelected connections: " + result.registration.entries.filter((entry) => entry.selected).map((entry) => JSON.stringify(entry.key)).join(", ") : "")
+      + ("connection" in result && result.connection ? "\n" + (result.connection.content ?? "Client settings prepared: " + result.connection.path) + "\n" + result.connection.instructions : "")
+      + ("next" in result ? "\n" + result.next : ""));
+    process.exitCode = result.ready && !("failed" in result && result.failed) ? 0 : 1;
+    return;
+  }
+  if (command === "registry" && positionals[1] === "history") {
+    const { historyIdSchema, historyQuerySchema } = await import("./registry/activity.js");
+    const action = positionals[2];
+    if (action === undefined) {
+      validateArguments(positionals, 2, values, ["hub", "target", "before", "limit"]);
+      printJson(await client.history(historyQuerySchema.parse({ target: values.target, before: values.before, limit: values.limit })));
+    } else if (action === "show" || action === "undo") {
+      validateArguments(positionals, 4, values, ["hub", ...(action === "undo" ? ["apply"] : [])]);
+      const id = historyIdSchema.parse(positionals[3]);
+      const result = action === "show" ? await client.historyEvent(id) : await client.undoHistory(id, Boolean(values.apply));
+      printJson(result);
+      if ("ready" in result && !result.ready) {
+        process.exitCode = 1;
+      }
+    } else {
+      throw new Error("Use registry history, history show SEQUENCE, or history undo SEQUENCE [--apply].");
+    }
+    return;
+  }
+  if (command === "target" && positionals[1] === "freshness") {
+    validateArguments(positionals, 2, values, ["hub", "stale-hours", "limit", "offset"]);
+    const { freshnessQuerySchema } = await import("./registry/activity.js");
+    const result = await client.freshness(freshnessQuerySchema.parse({ staleHours: values["stale-hours"], limit: values.limit, offset: values.offset }));
+    printOnboarding(result, values.json, () => result.items.map((item) => item.id + " " + item.state.toUpperCase() + " " + item.status
+      + " | last checked: " + (item.checkedAt ?? "never")).join("\n") + "\n" + result.items.length + "/" + result.total + " shown; offset " + result.offset + ". Consumer reports only; execution not verified.");
+    return;
+  }
+  if (command === "target" && positionals[1] === "observe") {
+    validateArguments(positionals, 2, values, ["hub", "all", "select", "q", "protocol", "tag", "include-disabled", "limit", "apply", "stale-only", "stale-hours", "inspect-stdio", "stdio-cwd", "refresh"]);
+    if (Boolean(values.all) === Boolean(values.select) || values["stdio-cwd"] && !values["inspect-stdio"]
+      || (values["inspect-stdio"] || values.refresh) && !values.apply) {
+      throw new Error("Choose --all or --select ID. Stdio inspection requires --apply; --stdio-cwd requires --inspect-stdio.");
+    }
+    const { batchTargetOptionsSchema } = await import("./targets/batch.js");
+    const { observeTargets } = await import("./targets/observe.js");
+    const result = await observeTargets(client, batchTargetOptionsSchema.parse({ select: values.select, q: values.q, protocol: values.protocol,
+      tag: values.tag, includeDisabled: values["include-disabled"], limit: values.limit === undefined ? undefined : Number(values.limit) }),
+      { apply: values.apply, staleOnly: values["stale-only"], staleHours: values["stale-hours"] === undefined ? undefined : Number(values["stale-hours"]),
+        inspectStdio: values["inspect-stdio"], stdioCwd: values["stdio-cwd"], refresh: values.refresh });
+    printJson(result);
+    process.exitCode = result.failed ? 1 : 0;
+    return;
+  }
   if (command === "mcp") {
     validateArguments(positionals, 1, values, ["hub", "no-config", "anonymous"]);
     const { runDiscoveryServer } = await import("./mcp.js");
@@ -761,7 +902,7 @@ function validateArguments(
   }
 
   // 2. Reject options belonging to another command instead of silently ignoring them.
-  const allowed = [...allowedOptions, "config", "json", ...(allowedOptions.includes("hub") ? ["token-env"] : [])];
+  const allowed = [...allowedOptions, "config", "json", ...(allowedOptions.includes("hub") ? ["token-env", "hub-profile", "hub-profiles-file"] : [])];
   const unexpected = Object.keys(values).filter((name) => name !== "help" && !allowed.includes(name));
   if (unexpected.length > 0) {
     throw new Error("Unsupported options for this command: " + unexpected.join(", "));

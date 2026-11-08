@@ -87,6 +87,21 @@ The snapshot includes OpenAI Docs, Toss Payments Docs, Microsoft Learn, Cloudfla
 
 These are working examples, not a provider allowlist. Register other MCP servers and A2A agents using the [generic definition schema](docs/reference.md#search-and-connection-definitions), or [import their remote metadata](docs/reference.md#import-and-refresh-metadata).
 
+## Environment management in v0.1.6
+
+Save named hubs, edit source profiles, inspect registry/source/environment status, and track metadata freshness. Guarded history undo helps recover accidental registration changes. The guided setup command brings existing connections into a hub and prepares a selected consuming client.
+
+```sh
+agent-tcdh hub-profile save work --hub https://hub.example.com --token-env WORK_ADMIN --read-token-env WORK_READER --apply
+agent-tcdh hub-profile use work --apply
+agent-tcdh status
+agent-tcdh setup --hub-profile work
+agent-tcdh target observe --all --stale-only --apply
+agent-tcdh registry history
+```
+
+See [environment management](docs/environment-management.md) for preview/apply behavior and [v0.1.6 release notes](docs/releases/v0.1.6.md) for verification and compatibility. This version migrates SQLite to schema 3; back up the database before upgrading. Snapshot format 1 and MCP/A2A discovery remain compatible. Metadata observations describe consumer inspections, not verified execution.
+
 ## Guided setup in v0.1.2
 
 Version `0.1.2` adds guided setup, file-free registration, seven connection profiles, configuration import, presets, diagnostics, target editing, and registry comparison. Use the current npm package or this source checkout; earlier `0.1.1` installations do not include these commands.

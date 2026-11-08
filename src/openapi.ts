@@ -145,6 +145,58 @@ export function createOpenApiDocument(authEnabled: boolean) {
           },
         },
       },
+      "/api/registry/history": {
+        get: {
+          operationId: "listRegistryHistory", summary: "List retained registry change summaries", "x-required-role": "admin",
+          parameters: [
+            { name: "target", in: "query", schema: { type: "string" } },
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+            { name: "before", in: "query", schema: { type: "integer", minimum: 1 } },
+          ],
+          responses: { "200": { description: "Descending sequence summaries and nextBefore cursor; retained within 1000 events and 16 MiB definition budget" }, ...commonErrors },
+        },
+      },
+      "/api/registry/history/{sequence}": {
+        get: {
+          operationId: "getRegistryHistory", summary: "Read retained before/after definitions", "x-required-role": "admin",
+          parameters: [{ name: "sequence", in: "path", required: true, schema: { type: "integer", minimum: 1 } }],
+          responses: { "200": { description: "Full before/after registry definitions; null indicates absent slot" }, "404": errorResponse("Event not found or expired"), ...commonErrors },
+        },
+      },
+      "/api/registry/history/{sequence}/undo": {
+        post: {
+          operationId: "undoRegistryChange", summary: "Preview or atomically invert the latest target change", "x-required-role": "admin",
+          parameters: [{ name: "sequence", in: "path", required: true, schema: { type: "integer", minimum: 1 } }],
+          requestBody: { required: true, content: { "application/json": { schema: {
+            type: "object", additionalProperties: false, properties: { apply: { type: "boolean", default: false } },
+          } } } },
+          responses: { "200": { description: "Readiness, inverse operation, and application status" }, "404": errorResponse("Event not found or expired"),
+            "412": errorResponse("Later target change or destination version mismatch"), ...commonErrors },
+        },
+      },
+      "/api/registry/freshness": {
+        get: {
+          operationId: "getMetadataFreshness", summary: "Read stored consumer metadata observations", "x-required-role": "read",
+          parameters: [
+            { name: "staleHours", in: "query", schema: { type: "number", minimum: 0, maximum: 8760, default: 24 } },
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 1000, default: 100 } },
+            { name: "offset", in: "query", schema: { type: "integer", minimum: 0, default: 0 } },
+          ],
+          responses: { "200": { description: "Paginated revision-bound observations with unknown/fresh/stale/changed state; no provider calls" }, ...commonErrors },
+        },
+      },
+      "/api/targets/{id}/observation": {
+        post: {
+          operationId: "recordMetadataObservation", summary: "Save a consumer-reported metadata result for the exact current revision", "x-required-role": "admin",
+          parameters: [idParameter, { ...ifMatchParameter, required: true }],
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", additionalProperties: false,
+            required: ["status", "scope", "executionVerified"], properties: {
+              status: { type: "string", enum: ["passed", "warning", "failed", "skipped"] }, scope: { const: "metadata" }, executionVerified: { const: false },
+            } } } } },
+          responses: { "200": { description: "Server timestamp and consumer-report attribution; definition revision unchanged" },
+            "412": errorResponse("Target changed or was deleted"), ...commonErrors },
+        },
+      },
       "/api/targets": {
         post: {
           operationId: "createTarget", summary: "Register a target", requestBody, "x-required-role": "admin",
