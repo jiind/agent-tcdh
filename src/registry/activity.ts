@@ -12,6 +12,15 @@ export const observationSchema = z.object({ status: z.enum(["passed", "warning",
 export const freshnessQuerySchema = z.object({ staleHours: z.coerce.number().min(0).max(8760).default(24),
   limit: z.coerce.number().int().min(1).max(1000).default(100), offset: z.coerce.number().int().min(0).default(0) }).strict();
 
+/** Classify a stored observation against the current definition and evaluation time. */
+export function observedFreshness(row: Record<string, unknown>, now: number, staleHours: number) {
+  const checkedAt = typeof row.checked_at === "string" ? row.checked_at : null;
+  const status = observationSchema.shape.status.safeParse(row.status);
+  return { checkedAt, status: status.success ? status.data : "unknown" as const,
+    state: checkedAt === null ? "unknown" as const : row.revision !== row.observed_revision ? "changed" as const
+      : Math.max(0, now - Date.parse(checkedAt)) >= staleHours * 3600000 ? "stale" as const : "fresh" as const };
+}
+
 /** Keep transactional history and revision-bound consumer observations beside the registry. */
 export class RegistryActivity {
   /** Initialize bounded history triggers without inventing events for preexisting definitions. */
@@ -130,9 +139,7 @@ export class RegistryActivity {
     return { evaluatedAt: new Date(now).toISOString(), staleHours: query.staleHours,
       total: Number(this.database.prepare("SELECT count(*) AS n FROM targets").get()!.n),
       items: rows.map((row) => ({ id: String(row.id), enabled: Boolean(row.enabled), etag: entityTag(String(row.revision)),
-        checkedAt: row.checked_at ?? null, status: row.status ?? "unknown", source: "consumer-report",
-        state: row.checked_at === null ? "unknown" : row.revision !== row.observed_revision ? "changed"
-          : Math.max(0, now - Date.parse(String(row.checked_at))) >= query.staleHours * 3600000 ? "stale" : "fresh",
+        ...observedFreshness(row, now, query.staleHours), source: "consumer-report",
         executionVerified: false })), limit: query.limit, offset: query.offset };
   }
 }

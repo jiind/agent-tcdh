@@ -11,11 +11,19 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createApp } from "../dist/app.js";
 import { HubClient } from "../dist/client.js";
+import { auditSummaryBatch } from "./selection-audit.mjs";
 
 const { values } = parseArgs({ options: {
   count: { type: "string", default: "3" }, model: { type: "string" }, output: { type: "string" },
+  workflow: { type: "string", default: "single" }, help: { type: "boolean" },
 } });
+if (values.help) {
+  console.log("Usage: npm run test:selection -- --model MODEL [--count 1..8] [--workflow single|summary-batch] [--output DIRECTORY]");
+  process.exit(0);
+}
 const count = Number(values.count);
+const summaryBatch = values.workflow === "summary-batch";
+assert.ok(summaryBatch || values.workflow === "single", "Use --workflow single or summary-batch.");
 assert.ok(Number.isInteger(count) && count >= 1 && count <= 8, "Use --count 1..8.");
 assert.ok(values.model, "Specify --model for an opt-in real Codex run.");
 const directory = values.output ? resolve(values.output) : await mkdtemp(join(tmpdir(), "agent-tcdh-selection-"));
@@ -88,7 +96,12 @@ target.addHook("preHandler", async (request, reply) => {
   }
 });
 hub.addHook("preHandler", async (request) => {
-  events.push({ source: "hub", path: request.url, method: request.body?.method, tool: request.body?.params?.name, targetId: request.body?.params?.arguments?.id });
+  const params = request.body?.params;
+  const args = params?.arguments;
+  events.push({ source: "hub", path: request.url, method: request.body?.method, tool: params?.name,
+    ...(params?.name === "get_target" ? { targetId: args?.id } : {}),
+    ...(params?.name === "get_targets" ? { targetIds: Array.isArray(args?.ids) ? args.ids : [] } : {}),
+    ...(params?.name === "search_targets" ? { search: { view: args?.view, tag: args?.tag, auth: args?.auth, inputs: args?.inputs } } : {}) });
 });
 
 for (const provider of candidates) {
@@ -135,7 +148,7 @@ for (const provider of candidates) {
   }
 }
 
-const summary = { startedAt: new Date().toISOString(), agent: "codex", clientVersion: version, model: values.model,
+const summary = { startedAt: new Date().toISOString(), agent: "codex", clientVersion: version, model: values.model, workflow: values.workflow,
   requestedTargets: count, candidateTargets: candidates.length, decoyTargets: 2, passed: false };
 try {
   // 1. Register independent targets; configure only the hub in the consumer's MCP settings.
@@ -149,15 +162,20 @@ try {
   }
   for (const provider of shuffled) {
     await admin.create({ id: provider.id, name: provider.id, description: provider.description,
-      protocol: provider.protocol, tags: [tag], capabilities: [{ name: provider.name, description: provider.description, inputSchema: schema }],
+      protocol: provider.protocol, tags: [summaryBatch && provider.decoy && provider.protocol === "mcp" ? "unrelated" : tag],
+      capabilities: [{ name: provider.name, description: provider.description, inputSchema: schema }],
       connection: { transport: provider.protocol === "mcp" ? "streamable-http" : "http",
         url: targetUrl + "/" + provider.id + "/" + provider.protocol,
         ...(provider.protocol === "a2a" ? { agentCardUrl: targetUrl + "/" + provider.id + "/agent-card.json", protocolVersion: "0.3.0", protocolBinding: "JSONRPC" } : {}),
-        auth: { type: "bearer", envVars: ["TCDH_SELECTION_TARGET_TOKEN"] } } });
+        auth: summaryBatch && provider.decoy && provider.protocol === "a2a" ? { type: "none" }
+          : { type: "bearer", envVars: ["TCDH_SELECTION_TARGET_TOKEN"] } } });
   }
   const tasks = candidates.filter((item) => item.selected).map((item) => ({ goal: item.description, input: item.input }));
+  const discovery = summaryBatch
+    ? `Use one search_targets call with view "summary", tag "${tag}", auth "bearer", and inputs true. Use capability summaries to choose targets, then call get_targets once with exactly the selected IDs and use its full metadata.`
+    : `Search the registry using tag ${tag}; unrelated providers are present. Select from capability descriptions, and use get_target for current connection details for every chosen target.`;
   const prompt = `Use the connected agent_tcdh hub to choose the read-only providers needed for these tasks: ${JSON.stringify(tasks)}.
-Search the registry using tag ${tag}; unrelated providers are present. Select from capability descriptions, and use get_target for current connection details for every chosen target. Do not invoke unrelated providers. Execute every requested task directly against its chosen MCP server or A2A agent. Target URLs must come only from hub responses. Read authentication from the environment variable referenced in connection.auth.envVars without printing it. Pass challenge ${challenge} and the task's input unchanged. MCP arguments and A2A data parts use {challenge,input}. Fetch each A2A Agent Card and follow its declared wire protocol. You may use shell HTTP clients when native tools cannot connect directly. Do not change personal or MCP configuration, access files outside this workspace, invoke additional models or subagents, or contact any network other than the hub and targets. Return only JSON: {"results":[{"targetId":"...","task":"capability name","protocol":"mcp or a2a","value":"actual value (preserve JSON type)","receipt":"actual server receipt"}]}. Never invent receipts or substitute your own computation for target execution.`;
+${discovery} Do not invoke unrelated providers. Execute every requested task directly against its chosen MCP server or A2A agent. Target URLs must come only from hub responses. Read authentication from the environment variable referenced in connection.auth.envVars without printing it. Pass challenge ${challenge} and the task's input unchanged. MCP arguments and A2A data parts use {challenge,input}. Fetch each A2A Agent Card and follow its declared wire protocol. You may use shell HTTP clients when native tools cannot connect directly. Do not change personal or MCP configuration, access files outside this workspace, invoke additional models or subagents, or contact any network other than the hub and targets. Return only JSON: {"results":[{"targetId":"...","task":"capability name","protocol":"mcp or a2a","value":"actual value (preserve JSON type)","receipt":"actual server receipt"}]}. Never invent receipts or substitute your own computation for target execution.`;
   const args = ["exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--json",
     "--model", values.model, "--sandbox", "workspace-write", "-c", "approval_policy=\"never\"",
     "-c", "sandbox_workspace_write.network_access=true", "-c", "model_reasoning_effort=\"medium\"",
@@ -188,7 +206,6 @@ Search the registry using tag ${tag}; unrelated providers are present. Select fr
       return [];
     }
   });
-  summary.final = JSON.parse(messages.at(-1) ?? "null");
   const hubCalls = events.filter((event) => event.source === "hub" && event.method === "tools/call");
   summary.hubSearchCalls = hubCalls.filter((event) => event.tool === "search_targets").length;
   summary.hubGetCalls = hubCalls.filter((event) => event.tool === "get_target").length;
@@ -197,16 +214,23 @@ Search the registry using tag ${tag}; unrelated providers are present. Select fr
     && ["tools/call", "message/send"].includes(event.method));
   const selectedIds = new Set(candidates.filter((item) => item.selected).map((item) => item.id));
   summary.unrelatedExecutionAttempts = attempts.filter((event) => !selectedIds.has(event.path.split("/")[1])).length;
+  if (summaryBatch) {
+    auditSummaryBatch(hubCalls, [...selectedIds], tag, summary);
+  } else {
+    assert.ok(summary.hubSearchCalls > 0 && summary.hubGetCalls >= count, "The consumer must discover and retrieve its chosen targets.");
+  }
   assert.equal(summary.unrelatedExecutionAttempts, 0, "An unrelated target received an execution request.");
   assert.equal(attempts.length, count, "Each selected target must receive exactly one execution request.");
   assert.equal(summary.exitCode, 0, "The Codex process failed.");
-  assert.ok(summary.hubSearchCalls > 0 && summary.hubGetCalls >= count, "The consumer must discover and retrieve its chosen targets.");
+  summary.final = JSON.parse(messages.at(-1) ?? "null");
   assert.equal(summary.final?.results?.length, count);
   assert.equal(executions.length, count, "Each selected provider must execute exactly once.");
   for (const provider of candidates.filter((item) => item.selected)) {
     const actual = executions.find((item) => item.targetId === provider.id);
     assert.ok(actual, "A requested provider was not executed.");
-    assert.ok(hubCalls.some((event) => event.tool === "get_target" && event.targetId === provider.id), "A selected provider was not retrieved through get_target.");
+    if (!summaryBatch) {
+      assert.ok(hubCalls.some((event) => event.tool === "get_target" && event.targetId === provider.id), "A selected provider was not retrieved through get_target.");
+    }
     if (provider.protocol === "a2a") {
       assert.ok(events.some((event) => event.source === "target" && event.path === "/" + provider.id + "/agent-card.json"), "A selected A2A Agent Card was not read.");
     }
@@ -230,9 +254,9 @@ Search the registry using tag ${tag}; unrelated providers are present. Select fr
   summary.finishedAt = new Date().toISOString();
   await writeFile(join(directory, "stdout.jsonl"), redact(stdout));
   await writeFile(join(directory, "stderr.log"), redact(stderr));
-  await writeFile(join(directory, "events.json"), JSON.stringify(events, null, 2) + "\n");
-  await writeFile(join(directory, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
+  await writeFile(join(directory, "events.json"), redact(JSON.stringify(events, null, 2)) + "\n");
+  await writeFile(join(directory, "summary.json"), redact(JSON.stringify(summary, null, 2)) + "\n");
   await hub.close();
   await target.close();
-  console.log(JSON.stringify(summary, null, 2));
+  console.log(redact(JSON.stringify(summary, null, 2)));
 }

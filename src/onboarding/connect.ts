@@ -6,7 +6,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { applyEdits, modify, parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { z } from "zod";
 import { envNameSchema, normalizeHub } from "./config.js";
-import { readConfigText, writeConfigText } from "./files.js";
+import { ConfigurationFileError, readConfigText, writeConfigText } from "./files.js";
 
 export const connectionClientSchema = z.enum(["codex", "opencode", "opencode-v1", "claude-code", "gemini-cli", "cursor", "vscode"]);
 export type ConnectionClient = z.infer<typeof connectionClientSchema>;
@@ -37,7 +37,7 @@ function bridgeEntry(client: ConnectionClient, hub: string, tokenEnv?: string) {
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
-    throw new Error("The existing configuration container must be an object.");
+    throw new ConfigurationFileError("The existing configuration container must be an object.");
   }
   return value as Record<string, unknown>;
 }
@@ -62,7 +62,7 @@ function toml(text: string): Record<string, unknown> {
   try {
     return parseToml(text);
   } catch {
-    throw new Error("Invalid TOML configuration. Fix it before adding the hub.");
+    throw new ConfigurationFileError("Invalid TOML configuration. Fix it before adding the hub.");
   }
 }
 
@@ -78,7 +78,7 @@ export function connectionDocument(client: ConnectionClient, existing: string, n
   const text = (existing.trim() ? existing : "{}\n").replace(/^\uFEFF/u, "");
   const parsed = parseJsonc(text, errors, { allowTrailingComma: true });
   if (errors.length > 0) {
-    throw new Error("Invalid JSON/JSONC configuration. Fix it before using the hub configuration.");
+    throw new ConfigurationFileError("Invalid JSON/JSONC configuration. Fix it before using the hub configuration.");
   }
   const root = object(parsed);
   let servers: Record<string, unknown>;
@@ -87,10 +87,10 @@ export function connectionDocument(client: ConnectionClient, existing: string, n
     const mcp = root.mcp === undefined ? {} : object(root.mcp);
     if (client === "opencode" && Object.entries(mcp).some(([key, value]) => key !== "servers"
       && value && typeof value === "object" && "type" in value)) {
-      throw new Error("This file uses OpenCode v1 server layout. Select opencode-v1 or migrate it first.");
+      throw new ConfigurationFileError("This file uses OpenCode v1 server layout. Select opencode-v1 or migrate it first.");
     }
     if (client === "opencode-v1" && mcp.servers !== undefined && !["remote", "local"].includes(String(object(mcp.servers).type))) {
-      throw new Error("This file uses OpenCode v2 server layout. Select opencode.");
+      throw new ConfigurationFileError("This file uses OpenCode v2 server layout. Select opencode.");
     }
     servers = client === "opencode" ? (mcp.servers === undefined ? {} : object(mcp.servers)) : mcp;
     path = client === "opencode" ? ["mcp", "servers", name] : ["mcp", name];
@@ -98,7 +98,7 @@ export function connectionDocument(client: ConnectionClient, existing: string, n
     const key = client === "vscode" ? "servers" : "mcpServers";
     const alternate = client === "vscode" ? "mcpServers" : "servers";
     if (root[key] === undefined && root[alternate] !== undefined) {
-      throw new Error("This file uses a different MCP server container. Select the matching client profile or choose another file.");
+      throw new ConfigurationFileError("This file uses a different MCP server container. Select the matching client profile or choose another file.");
     }
     servers = root[key] === undefined ? {} : object(root[key]);
     path = [key, name];
@@ -138,7 +138,7 @@ export function mergeConnection(
       return { content: existing, notes: [] };
     }
     if (previous !== undefined && !replace) {
-      throw new Error("This hub entry already exists with different settings. Use --replace to update only the named server.");
+      throw new ConfigurationFileError("This hub entry already exists with different settings. Use --replace to update only the named server.");
     }
     root.mcp_servers = { ...servers, [name]: entry };
     const start = "# AgentTCDH begin " + name;
@@ -163,7 +163,7 @@ export function mergeConnection(
       }
     }
     if (!replace) {
-      throw new Error("This TOML layout requires normalization. Use --replace after previewing; writing keeps an exact backup.");
+      throw new ConfigurationFileError("This TOML layout requires normalization. Use --replace after previewing; writing keeps an exact backup.");
     }
     return { content: stringifyToml(root), notes: ["TOML formatting and comments are normalized; the original file is preserved in the backup."] };
   }
@@ -182,13 +182,13 @@ export function mergeConnection(
     return { content: bom + text, notes: [] };
   }
   if (previous !== undefined && !replace) {
-    throw new Error("This hub entry already exists with different settings. Use --replace to update only the named server.");
+    throw new ConfigurationFileError("This hub entry already exists with different settings. Use --replace to update only the named server.");
   }
   const content = applyEdits(text, modify(text, path, entry, { formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" } }));
   const validation: ParseError[] = [];
   const actual = parseJsonc(content, validation, { allowTrailingComma: true });
   if (validation.length || !sameValue(actual, expected)) {
-    throw new Error("Unable to merge this JSONC layout. Use the generated fragment instead.");
+    throw new ConfigurationFileError("Unable to merge this JSONC layout. Use the generated fragment instead.");
   }
   return { content: bom + content + (content.endsWith("\n") ? "" : "\n"), notes: [] };
 }
@@ -196,7 +196,7 @@ export function mergeConnection(
 /** Preview a hub configuration or explicitly merge it into a chosen file with a backup. */
 export async function connectClient(options: {
   client: string; hub: string; tokenEnv?: string | undefined; write?: string | undefined;
-  replace?: boolean | undefined; name?: string | undefined; dryRun?: boolean | undefined;
+  replace?: boolean | undefined; name?: string | undefined; dryRun?: boolean | undefined; plan?: boolean | undefined;
 }) {
   const client = connectionClientSchema.parse(options.client);
   if (usesBridge(client)) {
@@ -207,11 +207,16 @@ export async function connectClient(options: {
     }
   }
   const existing = options.write ? await readConfigText(options.write) : undefined;
-  const merged = mergeConnection(client, options.hub, options.tokenEnv, existing, options.replace, options.name);
-  const result = options.write && !options.dryRun ? await writeConfigText(options.write, merged.content, existing)
+  const generated = mergeConnection(client, options.hub, options.tokenEnv, undefined, false, options.name).content;
+  const dryRun = Boolean(options.dryRun || options.plan);
+  const merged = options.write ? mergeConnection(client, options.hub, options.tokenEnv, existing, options.replace || options.plan, options.name)
+    : { content: generated, notes: [] };
+  const plan = options.write ? connectionPlan(client, options.name ?? "agent_tcdh", generated, existing, options.write,
+    Boolean(merged.notes.length)) : undefined;
+  const result = options.write && !dryRun ? await writeConfigText(options.write, merged.content, existing)
     : { changed: merged.content !== existing, ...(options.write ? { path: options.write } : {}) };
-  return { client, hub: normalizeHub(options.hub), ...result, dryRun: Boolean(options.dryRun),
-    ...(!options.write || options.dryRun ? { content: mergeConnection(client, options.hub, options.tokenEnv, undefined, false, options.name).content } : {}), transport: usesBridge(client) ? "stdio" : "streamable-http",
+  return { client, hub: normalizeHub(options.hub), ...result, dryRun,
+    ...(plan ? { plan } : {}), ...(!options.write || dryRun ? { content: generated } : {}), transport: usesBridge(client) ? "stdio" : "streamable-http",
     notes: [...merged.notes, ...(usesBridge(client) ? ["This profile launches the existing local discovery bridge. Generated Node/package paths belong to this machine; regenerate after moving the installation or changing execution environments."] : [])],
     requiredEnvironmentVariables: options.tokenEnv ? [options.tokenEnv] : [],
     instructions: "Use AgentTCDH search_targets to find capabilities, then get_target to retrieve current connection details. "
@@ -231,8 +236,22 @@ export async function checkConnection(options: {
   const client = connectionClientSchema.parse(options.client);
   const name = options.name ?? "agent_tcdh";
   const generated = mergeConnection(client, options.hub, options.tokenEnv, "", false, name).content;
-  const expected = connectionDocument(client, generated, name).servers[name];
   const existing = await readConfigText(options.file);
+  const { reason, differingFields } = compareConnection(client, name, generated, existing);
+  return { client, hub: normalizeHub(options.hub), name, path: resolve(options.file),
+    status: reason === "matched" ? "passed" : "failed", reason, differingFields,
+    changed: false, executionVerified: false, transport: usesBridge(client) ? "stdio" : "streamable-http",
+    requiredEnvironmentVariables: options.tokenEnv ? [options.tokenEnv] : [],
+    action: reason === "matched" ? "Configuration matches the generated profile. Reload the client if it has not loaded these settings."
+      : reason === "settings-differ" ? "Review connect --print and connect --write FILE --dry-run --replace before updating this named entry."
+        : "Review connect --write FILE --dry-run, then use --write FILE to add the named hub entry.",
+    scope: "Local configuration comparison only. Client loading, credential values, hub access, and target execution were not verified.",
+  };
+}
+
+/** Report only recognized field names and a marker for additional settings. */
+function compareConnection(client: ConnectionClient, name: string, generated: string, existing: string | undefined) {
+  const expected = connectionDocument(client, generated, name).servers[name];
   const document = existing === undefined ? undefined : connectionDocument(client, existing, name);
   const present = document !== undefined && Object.hasOwn(document.servers, name);
   const actual = present ? document!.servers[name] : undefined;
@@ -254,13 +273,11 @@ export async function checkConnection(options: {
   }
   const reason = existing === undefined ? "file-missing" : !present ? "entry-missing"
     : sameValue(actual, expected) ? "matched" : "settings-differ";
-  return { client, hub: normalizeHub(options.hub), name, path: resolve(options.file),
-    status: reason === "matched" ? "passed" : "failed", reason, differingFields,
-    changed: false, executionVerified: false, transport: usesBridge(client) ? "stdio" : "streamable-http",
-    requiredEnvironmentVariables: options.tokenEnv ? [options.tokenEnv] : [],
-    action: reason === "matched" ? "Configuration matches the generated profile. Reload the client if it has not loaded these settings."
-      : reason === "settings-differ" ? "Review connect --print and connect --write FILE --dry-run --replace before updating this named entry."
-        : "Review connect --write FILE --dry-run, then use --write FILE to add the named hub entry.",
-    scope: "Local configuration comparison only. Client loading, credential values, hub access, and target execution were not verified.",
-  };
+  return { reason, differingFields };
+}
+
+function connectionPlan(client: ConnectionClient, name: string, generated: string, existing: string | undefined, file: string, normalize: boolean) {
+  const { reason, differingFields } = compareConnection(client, name, generated, existing);
+  return { action: reason === "matched" ? "unchanged" : reason === "settings-differ" ? "replace" : "add", path: resolve(file), name,
+    differingFields, requiresReplace: reason === "settings-differ" || normalize, normalizesFile: normalize };
 }

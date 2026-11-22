@@ -10,6 +10,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createApp } from "../dist/app.js";
+import { mergeConnection } from "../dist/onboarding/connect.js";
 
 const { values } = parseArgs({ options: {
   agent: { type: "string" }, model: { type: "string" }, output: { type: "string" },
@@ -25,6 +26,11 @@ if (values.output) {
 const workspace = join(directory, "workspace");
 await mkdir(workspace, { recursive: true });
 const clientVersion = commandVersion(values.agent);
+const openCodeMajor = values.agent === "opencode" ? clientVersion.match(/\bv?([12])\.\d+\.\d+\b/iu)?.[1] : undefined;
+if (values.agent === "opencode") {
+  assert.ok(openCodeMajor, "Use an OpenCode 1.x or 2.x binary for version-specific verification.");
+}
+const connectionProfile = values.agent === "codex" ? "codex" : openCodeMajor === "1" ? "opencode-v1" : "opencode";
 const events = [];
 const receipts = { mcp: [], a2a: [] };
 const challenge = randomUUID();
@@ -107,7 +113,8 @@ target.post("/a2a", async (request, reply) => {
   } };
 });
 hub.addHook("preHandler", async (request) => {
-  events.push({ source: "hub", path: request.url, method: request.body?.method, tool: request.body?.params?.name });
+  events.push({ source: "hub", path: request.url, method: request.body?.method, tool: request.body?.params?.name,
+    usedReadCredential: request.headers.authorization === "Bearer " + readToken });
 });
 
 /** Register connection information and credential references in the temporary hub. */
@@ -202,8 +209,7 @@ try {
     env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
       enabled_providers: ["opencode"], model: values.model, autoupdate: false, snapshot: false,
       permission: { "*": "deny", bash: "allow", agent_tcdh_search_targets: "allow", agent_tcdh_get_target: "allow" },
-      mcp: { agent_tcdh: { type: "remote", url: hubUrl + "/mcp", oauth: false,
-        headers: { Authorization: "Bearer {env:TCDH_ACCEPT_READ_TOKEN}" } } },
+      ...JSON.parse(mergeConnection(connectionProfile, hubUrl, "TCDH_ACCEPT_READ_TOKEN").content),
     });
     args = ["run", "--pure", "--dir", workspace, "--print-logs", "--log-level", "DEBUG",
       "--model", values.model, "--variant", "medium", "--format", "json", prompt];
@@ -234,9 +240,9 @@ try {
   const final = redact(messages.at(-1) ?? "");
   const hubTools = events.filter((event) => event.source === "hub" && event.method === "tools/call").map((event) => event.tool);
   const summary = {
-    agent: values.agent, clientVersion, model: values.model, exitCode: result.code,
+    agent: values.agent, clientVersion, connectionProfile, model: values.model, exitCode: result.code,
     mode: values["connection-only"] ? "connection-only" : "execution", externalFailure: result.externalFailure,
-    hubInitialized: events.some((event) => event.source === "hub" && event.method === "initialize"),
+    hubInitialized: events.some((event) => event.source === "hub" && event.method === "initialize" && event.usedReadCredential),
     hubToolsListed: events.some((event) => event.source === "hub" && event.method === "tools/list"),
     hubSearchCalls: hubTools.filter((name) => name === "search_targets").length,
     hubGetCalls: hubTools.filter((name) => name === "get_target").length,

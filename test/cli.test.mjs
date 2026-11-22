@@ -22,6 +22,9 @@ test("help and invalid commands or options are handled without network requests"
   assert.match((await cli(["--help"])).stdout, /AgentTCDH/);
   await assert.rejects(cli(["unknown"]), /Unknown command/);
   await assert.rejects(cli(["target", "get"]), /argument count/);
+  await assert.rejects(cli(["target", "get", "docs", "--select", "other"]), /argument count/);
+  await assert.rejects(cli(["target", "get", "--select", "docs", "--with-version"]), /Unsupported options/);
+  await assert.rejects(cli(["target", "get", "--select", "docs", "--select", "docs"]), /unique/);
   await assert.rejects(cli(["target", "list", "--port", "3000"]), /Unsupported options/);
   await assert.rejects(cli(["serve", "--port", "0"]), /too_small/);
 });

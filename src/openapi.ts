@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { PACKAGE_VERSION } from "./version.js";
 import {
-  searchFields, searchResultSchema, searchSchema, targetDefinitionSchema, targetIdSchema, targetSchema,
+  discoverySearchSchema, searchResultSchema, searchSummaryResultSchema, targetDefinitionSchema, targetIdSchema,
+  targetLookupResultSchema, targetLookupSchema, targetSchema,
 } from "./targets/schema.js";
 import { importOptionsSchema, importResultSchema, snapshotSchema } from "./registry/schema.js";
 import { discoveryCommandSchema } from "./a2a-discovery.js";
@@ -47,10 +48,10 @@ export function createOpenApiDocument(authEnabled: boolean) {
       })).optional(),
     }),
   });
-  const query = component("Search", searchSchema);
+  const query = component("Search", discoverySearchSchema);
   const queryProperties = query.properties as Record<string, JsonObject>;
-  const parameters = Object.keys(searchFields).map((name) => ({
-    name, in: "query", required: false, schema: queryProperties[name],
+  const parameters = Object.entries(queryProperties).map(([name, schema]) => ({
+    name, in: "query", required: false, schema,
   }));
   const idParameter = {
     name: "id", in: "path", required: true, schema: z.toJSONSchema(targetIdSchema),
@@ -206,9 +207,12 @@ export function createOpenApiDocument(authEnabled: boolean) {
           operationId: "searchTargets", summary: "Search, filter, and paginate targets", parameters, "x-required-role": "read",
           responses: {
             "200": {
-              description: "Filtered total count and current result page",
-              content: { "application/json": { schema: { $ref: "#/components/schemas/SearchResult" } } },
+              description: "Filtered total count and page. Request view=summary for compact targets and suggest=true for separate near matches.",
+              content: { "application/json": { schema: { oneOf: [
+                { $ref: "#/components/schemas/SearchResult" }, { $ref: "#/components/schemas/SearchSummaryResult" },
+              ] } } },
             },
+            "409": errorResponse("The registry changed during cursor pagination. Restart with cursor=start."),
             ...commonErrors,
           },
         },
@@ -233,6 +237,18 @@ export function createOpenApiDocument(authEnabled: boolean) {
           },
         },
       },
+      "/api/targets/lookup": {
+        post: {
+          operationId: "lookupTargets", summary: "Get selected target definitions in request order", "x-required-role": "read",
+          requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/TargetLookup" } } } },
+          responses: {
+            ...commonErrors,
+            "200": { description: "Selected targets with null entries for missing IDs",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/TargetLookupResult" } } } },
+            "413": errorResponse("Request body or combined stored definitions exceed the size limit"),
+          },
+        },
+      },
       "/.well-known/agent-card.json": {
         get: {
           operationId: "getHubAgentCard", summary: "Hub A2A Agent Card", security: [], "x-required-role": "public",
@@ -249,7 +265,7 @@ export function createOpenApiDocument(authEnabled: boolean) {
           parameters: [{ name: "A2A-Version", in: "header", schema: { type: "string", enum: ["1.0", "0.3", "0.3.0"], default: "0.3" } }],
           requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
           responses: {
-            "200": { description: "A2A message or JSON-RPC error. Data contains SearchResult, Target, or an application error." },
+            "200": { description: "A2A message or JSON-RPC error. Data contains SearchResult, SearchSummaryResult, Target, TargetLookupResult, or an application error." },
             "400": { description: "Invalid JSON-RPC request or unsupported version" },
             "401": commonErrors["401"], "403": { description: "Origin not allowed" },
             "413": commonErrors["413"], "415": { description: "Unsupported Content-Type" },
@@ -260,7 +276,7 @@ export function createOpenApiDocument(authEnabled: boolean) {
       "/mcp": {
         post: {
           operationId: "discoverWithMcp", summary: "Streamable HTTP MCP discovery tools", "x-required-role": "read",
-          description: "Stateless MCP request/response with search_targets and get_target.",
+          description: "Stateless MCP request/response with search_targets, get_target, and get_targets.",
           requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
           responses: {
             "200": { description: "MCP JSON-RPC response" },
@@ -286,7 +302,10 @@ export function createOpenApiDocument(authEnabled: boolean) {
       schemas: {
         TargetDefinition: component("TargetDefinition", targetDefinitionSchema),
         Target: component("Target", targetSchema, "output"),
+        TargetLookup: component("TargetLookup", targetLookupSchema),
+        TargetLookupResult: component("TargetLookupResult", targetLookupResultSchema, "output"),
         SearchResult: component("SearchResult", searchResultSchema, "output"),
+        SearchSummaryResult: component("SearchSummaryResult", searchSummaryResultSchema, "output"),
         Error: component("Error", errorSchema, "output"),
         RegistrySnapshot: component("RegistrySnapshot", snapshotSchema),
         RegistryImportResult: component("RegistryImportResult", importResultSchema, "output"),

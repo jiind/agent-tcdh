@@ -75,7 +75,7 @@ function readCommand(params: Record<string, unknown>, legacy: boolean): {
     ? discoveryCommandSchema.safeParse({ operation: "search_targets", arguments: { q: part.text } })
     : discoveryCommandSchema.safeParse(part.data);
   if (!command.success) {
-    return { error: { code: -32602, message: "Use search_targets or get_target with valid arguments." } };
+    return { error: { code: -32602, message: "Use search_targets, get_target, or get_targets with valid arguments." } };
   }
   if (keys[0] === "text" && (typeof part.text !== "string" || !searchSchema.safeParse({ q: part.text }).success)) {
     return { error: { code: -32602, message: "Search text must be a string of at most 500 characters." } };

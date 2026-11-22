@@ -33,7 +33,9 @@ The consumer owns target selection, protocol clients, credentials, and execution
 
 ## Quickstart
 
-Use **Node.js 24 or newer** and npm. Install the current npm release:
+Use **Node.js 24 or newer** and npm. If you already have MCP connections configured, import the ones you want to discover through AgentTCDH and connect your client to the hub.
+
+**Terminal 1 — Install and start the hub.** Accept the loopback defaults in `init` for a local hub listening at `http://127.0.0.1:3000`.
 
 ```sh
 npm install --global agent-tcdh
@@ -41,13 +43,24 @@ agent-tcdh init
 agent-tcdh serve
 ```
 
-For a hub without global installation:
+**Terminal 2 — Preview and apply the import.** This example uses Codex as the consuming client. Run the commands from the project with the connections you want to import. Replace `PATH_TO_CODEX_CONFIG` with the actual path to the `config.toml` used by Codex.
 
 ```sh
-npx --yes agent-tcdh serve
+agent-tcdh setup --client codex --write "PATH_TO_CODEX_CONFIG"
+agent-tcdh setup --client codex --write "PATH_TO_CODEX_CONFIG" --apply
 ```
 
-To run the isolated demo from source:
+Choose the same source entries in both prompts and confirm the second command to register them and write the hub connection. Expect `Setup applied.` and the path to the client settings.
+
+**In Codex — Run your first search.** Restart or reload Codex and ask it to use the `agent_tcdh` MCP server:
+
+> Use AgentTCDH's `search_targets` to find an imported target by its name or capability. Return its ID, protocol, and any matching capabilities.
+
+Mention a name or capability you selected during setup. The matching registration confirms that your client can discover targets through the hub. See [client connection formats](docs/client-connections.md) for other clients and [setup options](docs/environment-management.md#complete-first-use-setup) to select explicit source locations or configure a remote hub.
+
+### Try it with sample targets
+
+If you have no existing MCP connections, run the isolated demo from source:
 
 ```sh
 git clone https://github.com/jiind/agent-tcdh.git
@@ -55,8 +68,6 @@ cd agent-tcdh
 npm ci
 npm run demo
 ```
-
-Published [GitHub releases](https://github.com/jiind/agent-tcdh/releases) provide built tarballs, source manifests, and checksums. See the [v0.1.5 release notes](docs/releases/v0.1.5.md) for current source features, verification scope, and separate publication checks. Source commands below use the repository checkout; an installed CLI uses `agent-tcdh` in place of `npm run cli --` or `node dist/index.js`.
 
 The demo starts an isolated hub, registers three local targets, discovers them, and calls HTTP MCP, stdio MCP, and A2A targets directly. It checks execution receipts and cleans up. No account, API key, external service, or model is needed.
 
@@ -66,6 +77,8 @@ npm run demo -- --serve
 ```
 
 `--discovery a2a` queries the hub over A2A. `--serve` keeps the demo available for manual connections. See [the local demo guide](docs/local-demo.md).
+
+Published [GitHub releases](https://github.com/jiind/agent-tcdh/releases) provide built tarballs, source manifests, and checksums. Source commands below use the repository checkout. An installed CLI uses `agent-tcdh` in place of `npm run cli --` or `node dist/index.js`.
 
 ### Start a persistent registry
 
@@ -177,8 +190,9 @@ Connect your MCP client to `http://127.0.0.1:3000/mcp`.
 
 | Tool | Purpose |
 | --- | --- |
-| `search_targets` | Search capabilities; filter by keyword, protocol, or tag; paginate results |
+| `search_targets` | Search capabilities by keyword and filter by protocol, transport, declared remote auth, or tag |
 | `get_target` | Retrieve current capabilities, transport, address/command, and credential references |
+| `get_targets` | Retrieve the same details for several selected IDs in one request |
 
 Configure the hub once in your consumer, then ask it to discover suitable targets and connect directly. For example:
 
@@ -186,9 +200,15 @@ Configure the hub once in your consumer, then ask it to discover suitable target
 
 The consumer needs permission and a way to call the discovered target. Recorded Codex runs used native MCP discovery and agent-written HTTP clients for execution. See [Codex/OpenCode configuration and stdio setup](docs/reference.md#mcp-discovery) and [actual-agent verification](docs/agent-verification.md).
 
+For larger catalogs, use `view: "summary"` to compare candidates and their matched capabilities. Call `get_target` for one selected ID or `get_targets` for several. See [summary search](docs/reference.md#compare-candidates-with-summary-search).
+
+If a search yields zero complete matches, request `suggest: true` to see close candidates and which search term each missed. See [search suggestions](docs/reference.md#find-candidates-after-an-empty-search).
+
+Version `0.1.7` adds match explanations, required-input previews, freshness filtering, and change-aware cursors. In the CLI, save repeatable searches and select targets with terminal checkboxes. See [discovery options](docs/reference.md#explain-and-page-through-discovery), [search profiles](docs/reference.md#save-and-reuse-cli-searches), and [v0.1.7 release notes](docs/releases/v0.1.7.md).
+
 ## A2A discovery
 
-Agent peers can discover the hub through `/.well-known/agent-card.json` and query it through `/a2a`. The hub supports A2A 1.0 and 0.3 JSONRPC discovery with structured `search_targets` and `get_target` operations.
+Agent peers can discover the hub through `/.well-known/agent-card.json` and query it through `/a2a`. The hub supports A2A 1.0 and 0.3 JSONRPC discovery with structured `search_targets`, `get_target`, and `get_targets` operations.
 
 The selected target's protocol determines how the consumer executes it. A consumer can discover an MCP server through the hub's A2A interface, then call that server with MCP. See [message formats and protocol versions](docs/reference.md#a2a-discovery).
 

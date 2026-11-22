@@ -2,7 +2,25 @@
 
 ## Unreleased
 
-No changes yet.
+## 0.1.7 — 2026-11-26
+
+- Guide first-time users from setup through the first MCP search and verify the generated connection with the installed package.
+- Report partial setup failures with a safe diagnostic and a retry command for the selected client configuration.
+- Rank exact ID, name, and capability matches first. Add opt-in normalized keyword matching to CLI, HTTP, MCP, and structured A2A discovery while preserving literal batch selection.
+- Add a reproducible search benchmark and record before/after quality and latency.
+- Add opt-in summary search across CLI, HTTP, MCP, and structured A2A for comparing candidates before fetching complete connection details.
+- Rank targets with a single capability covering all query terms ahead of matches spread across several capabilities, after exact matches.
+- Filter discovery by transport and declared remote authentication type, and show both in summary results.
+- Retrieve several selected target definitions in one read, with a result for each requested ID.
+- Reduce memory use for large ranked searches and read unranked pages directly in SQLite.
+- Explain empty target searches in the CLI and offer opt-in suggestions with the missing search term across CLI, HTTP, MCP, and A2A.
+- Add search aliases, per-term matching fields, filter-exclusion counts, required-input previews, and stored freshness filters.
+- Rank keyword queries using compact SQLite search metadata and return change-aware cursors for stable pagination.
+- Add terminal batch selection, private search profiles, and Bash, Zsh, and PowerShell completion.
+- Preview client configuration changes with redacted field-level details, offer actionable status commands, and watch pinned sources for synchronization previews.
+- Exercise Codex TOML and OpenCode 1.x/2.x JSON layouts against an authenticated fixture hub, and add an opt-in real-agent summary and batch verification workflow.
+
+See the [v0.1.7 release notes](docs/releases/v0.1.7.md) for compatibility, upgrade behavior, and verification scope.
 
 ## 0.1.6 — 2026-11-08
 

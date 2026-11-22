@@ -13,12 +13,18 @@ export const targetEditSchema = z.strictObject({
   enabled: z.boolean().optional(),
   addTags: z.array(tag).max(50).default([]),
   removeTags: z.array(tag).max(50).default([]),
+  addAliases: fields.aliases.unwrap().default([]),
+  removeAliases: fields.aliases.unwrap().default([]),
 }).superRefine((patch, context) => {
-  if (patch.name === undefined && patch.description === undefined && patch.enabled === undefined && !patch.addTags.length && !patch.removeTags.length) {
-    context.addIssue({ code: "custom", message: "Choose a name, description, tag change, or enabled state to edit." });
+  if (patch.name === undefined && patch.description === undefined && patch.enabled === undefined && !patch.addTags.length && !patch.removeTags.length
+    && !patch.addAliases.length && !patch.removeAliases.length) {
+    context.addIssue({ code: "custom", message: "Choose a name, description, tag, alias, or enabled state to edit." });
   }
   if (patch.addTags.some((value) => patch.removeTags.includes(value))) {
     context.addIssue({ code: "custom", message: "The same tag cannot be added and removed in one edit." });
+  }
+  if (patch.addAliases.some((value) => patch.removeAliases.includes(value))) {
+    context.addIssue({ code: "custom", message: "The same alias cannot be added and removed in one edit." });
   }
 });
 
@@ -41,12 +47,11 @@ async function readForChange(client: Pick<HubClient, "getVersioned">, id: string
   if (target.id !== id) {
     throw new Error("The hub returned a different target id.");
   }
-  const definition = targetDefinitionSchema.parse({ id: target.id, name: target.name, description: target.description,
-    protocol: target.protocol, tags: target.tags, enabled: target.enabled, capabilities: target.capabilities, connection: target.connection });
+  const { createdAt: _created, updatedAt: _updated, ...definition } = target;
   return { definition, etag: current.etag };
 }
 
-/** Preview or conditionally save only administrator-controlled labels, tags, and enabled state. */
+/** Preview or conditionally save only administrator-controlled labels, tags, aliases, and enabled state. */
 export async function editTarget(client: Pick<HubClient, "getVersioned" | "update">, id: string,
   input: z.input<typeof targetEditSchema>, options: { dryRun?: boolean | undefined; ifMatch?: string | undefined } = {}) {
   // 1. Validate the requested edits and merge tags without reordering surviving entries.
@@ -58,13 +63,17 @@ export async function editTarget(client: Pick<HubClient, "getVersioned" | "updat
       tags.push(value);
     }
   }
+  const aliases = patch.addAliases.length || patch.removeAliases.length
+    ? [...new Set([...(current.definition.aliases ?? []).filter((value) => !patch.removeAliases.includes(value)), ...patch.addAliases])]
+    : current.definition.aliases;
   const target = targetDefinitionSchema.parse({ ...current.definition, tags,
+    ...(aliases && (aliases.length > 0 || current.definition.aliases !== undefined) ? { aliases } : {}),
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}) });
 
   // 2. Report semantic changes and save with the observed version; never retry a conflicting write.
-  const editable = ["name", "description", "tags", "enabled"] as const;
+  const editable = ["name", "description", "tags", "aliases", "enabled"] as const;
   const changes = editable.filter((field) => !isDeepStrictEqual(current.definition[field], target[field]))
     .map((field) => ({ field, before: current.definition[field], after: target[field] }));
   const applied = changes.length > 0 && !options.dryRun;

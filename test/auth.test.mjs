@@ -186,7 +186,7 @@ test("HTTP MCP clients can search and retrieve using a read token", async (t) =>
     requestInit: { headers: read },
   }));
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [
-    "get_target", "search_targets",
+    "get_target", "get_targets", "search_targets",
   ]);
   assert.equal(payload(await client.callTool({ name: "search_targets", arguments: {} })).total, 1);
   assert.equal(payload(await client.callTool({

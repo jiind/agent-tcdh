@@ -291,6 +291,20 @@ test("terminal tables strip controls while JSON and fragment modes remain explic
   const text = targetTable({ items: [{ ...definition("docs\u001b[31m"), enabled: true }], total: 1, limit: 20, offset: 0 });
   assert.ok(text.includes("docs"));
   assert.equal(text.includes("\u001b"), false);
+  const summary = targetTable({ view: "summary", total: 1, limit: 20, offset: 0, items: [{ id: "docs", protocol: "mcp", enabled: true,
+    transport: "streamable-http", authType: "bearer",
+    capabilityCount: 2, matchedCapabilities: [{ name: "search\u001b[31m", description: "Search documentation" }] }] });
+  assert.match(summary, /MATCHED CAPABILITIES/);
+  assert.match(summary, /streamable-http\s+bearer/);
+  assert.match(summary, /search/);
+  assert.equal(summary.includes("\u001b"), false);
+  const empty = { items: [], total: 0, limit: 20, offset: 0 };
+  assert.equal(targetTable(empty), "0 matching targets.\n");
+  const suggestions = targetTable({ ...empty, suggestions: [{ id: "docs", name: "Search docs", protocol: "mcp", transport: "streamable-http",
+    enabled: true, description: "", capabilityCount: 1, matchedCapabilities: [], missingTerm: "archive\u001b[31m" }] });
+  assert.match(suggestions, /Suggestions missing one search term/);
+  assert.match(suggestions, /docs\s+Search docs\s+Missing "archive/);
+  assert.equal(suggestions.includes("\u001b"), false);
   assert.match((await failure(["connect", "codex", "--print", "--json"])).stderr, /cannot be combined/);
   assert.match((await failure(["connect", "codex", "--dry-run"])).stderr, /--write FILE/);
 });

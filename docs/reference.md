@@ -4,7 +4,7 @@ CLI, connection definitions, protocol details, authentication, and deployment se
 
 ## CLI
 
-This reference targets AgentTCDH `0.1.5`. See [guided setup](onboarding.md), including [batch diagnostics](onboarding.md#inspect-multiple-registrations), [configuration import and presets](config-import.md), [client connections](client-connections.md), [target management](target-management.md), and [registry comparison](registry-comparison.md). Version `0.1.1` supports the original CLI and does not include these additions. Check the [release notes](releases/v0.1.5.md) for installation and publication status.
+This reference targets AgentTCDH `0.1.7`. See [guided setup](onboarding.md), including [batch diagnostics](onboarding.md#inspect-multiple-registrations), [configuration import and presets](config-import.md), [client connections](client-connections.md), [target management](target-management.md), and [registry comparison](registry-comparison.md). Check the [release notes](releases/v0.1.7.md) for version-specific changes and upgrade behavior.
 
 ```text
 agent-tcdh --version [--json]
@@ -72,13 +72,93 @@ Updates replace the complete definition. Set `enabled: false` to disable a targe
 
 ## Search and connection definitions
 
-Search is case-insensitive keyword matching. Whitespace-separated terms must all match, possibly across different fields. Results are ranked; equal scores use stable id order. An empty query lists targets by id.
+Search is case-insensitive keyword matching. Whitespace-separated terms must all match, possibly across different fields. A whole-query match against an ID, name, or capability name takes priority in that order. For a query with multiple distinct terms, a target ranks higher when a single capability covers every term across its name and description. Weighted field scores and then ID resolve the remaining order. An empty query lists targets by ID.
 
-Parameters are `q`, `protocol`, `tag`, `includeDisabled`, `limit`, and `offset`. Defaults: enabled targets only, `limit: 20`, `offset: 0`. Maximum limit: 100; maximum offset: 1000000. Totals are calculated after all filters and before pagination.
+Registrations may include up to 30 `aliases` for acronyms, alternate spellings, or multilingual names. Manage individual values with repeated `target edit ID --add-alias LABEL` or `--remove-alias LABEL`. Aliases participate in normal and normalized matching and survive metadata refreshes and managed source synchronization.
+
+Optional `match=normalized` composes canonically equivalent Unicode and treats hyphens, underscores, and whitespace as word separators in the query and searchable metadata. For example, `agent-tcdh target list --q "release_notes" --match normalized` can find a target named `Release Notes`. Literal whole-query matches take priority, followed by normalized whole-query matches, single-capability coverage, and weighted field scores. A query consisting only of separators uses literal matching. Protocol, tag, enabled-state filters, and batch-operation membership retain their usual behavior. Omit `match` when connecting to a hub that predates this option.
+
+Parameters are `q`, `match`, `view`, `suggest`, `protocol`, `transport`, `auth`, `tag`, `includeDisabled`, `limit`, and `offset`. Searches default to enabled targets, a limit of 20, and an offset of 0. The maximum limit is 100 and the maximum offset is 1000000. Totals are calculated after all filters and before pagination.
 
 ```json
 {"items": [], "total": 0, "limit": 20, "offset": 0}
 ```
+
+### Find candidates after an empty search
+
+Use `--suggest` in the CLI, `suggest=true` in HTTP searches, or `suggest: true` in MCP and structured A2A search arguments. For a first page with zero complete matches and at least three distinct search terms, the hub can suggest targets whose metadata matches all but one term. Suggestions honor the same filters as complete matches.
+
+#### Explain and page through discovery
+
+| CLI | HTTP query field and MCP/A2A argument | Result |
+| --- | --- | --- |
+| `--explain` | `explain: true` | `explanations` lists the matching field categories for up to 50 distinct terms per returned target. For zero complete results, `exclusions` counts keyword matches excluded by each active filter. One target can count against several filters. |
+| `--inputs` | `inputs: true` with `view: "summary"` | Each capability preview can include up to 12 required top-level input names and their declared simple types. Complex schemas can return `requiredInputs: null`. An input with an undeclared or union type has `type: null`. |
+| `--with-freshness` | `withFreshness: true` | A `freshness` entry with `checkedAt`, `state`, and observation `status` for each returned ID. |
+| `--freshness fresh` | `freshness: "fresh"` | Filters by `unknown`, `changed`, `stale`, or `fresh` and includes observation details. `--stale-hours` / `staleHours` defaults to 24 and accepts 0 through 8760 hours. |
+| `--cursor start` | `cursor: "start"` | Begins change-aware pagination and returns `nextCursor` or `null` at the end. |
+
+Use the returned cursor with the same search options and page size. Omit `offset` when resuming. A registry write or stored observation update invalidates outstanding cursors. Start again after HTTP `409 SEARCH_CURSOR_CHANGED`. Observation age is evaluated at the start of a cursor search. A fresh observation may still have a failed or warning status. Searches use stored metadata and issue no provider requests.
+
+#### Save and reuse CLI searches
+
+```sh
+agent-tcdh search-profile save doc-review --q manual --view summary --explain --inputs --apply
+agent-tcdh target list --search-profile doc-review --with-freshness
+agent-tcdh target list --search-profile doc-review --q deployment --interactive
+agent-tcdh search-profile list
+```
+
+Search profiles live in `~/.agent-tcdh/search-profiles.json`. Use `--search-profiles-file FILE` to choose a private project-specific location. Profiles store search options, with no hub or credential settings. Explicit options override saved values. Save and remove commands preview by default. Use `--apply` to write and `--replace` to save over an existing name.
+
+Interactive search presents a terminal checkbox list with no targets preselected. Select up to ten targets from the current page and press Enter to fetch their complete records in one ordered lookup. For automation, use `target get --select ID --select ID`.
+
+Generate completions with `agent-tcdh completion bash`, `agent-tcdh completion zsh`, or `agent-tcdh completion powershell`. Save the output to a local script and source it from the matching shell using `source` in Bash/Zsh or dot-sourcing in PowerShell. Generation uses local command help and needs no hub connection.
+
+```sh
+agent-tcdh target list --q "warehouse stock reserve yearly" --suggest
+```
+
+`items` and `total` report complete matches. When requested, `suggestions` contains up to three summaries or the requested `limit`, whichever is smaller. Each suggestion has a `missingTerm` using the same case folding and normalization as the search. A single capability covering all the matched terms gives a suggestion priority, followed by the usual weighted score and ID. The CLI displays a separate suggestion list in a terminal and includes the array in JSON output. An empty array means there were no eligible suggestions. Use the displayed term to decide whether to revise the query. When connecting to a hub that predates suggestions, omit the option.
+
+### Filter by connection requirements
+
+Set `transport` to `stdio`, `streamable-http`, `sse`, or `http`. Set `auth` to `none`, `bearer`, `api-key`, or `oauth2` to filter remote registrations by their declared authentication type. `auth=none` includes remote targets whose authentication entry is omitted or explicitly set to `none`. Stdio registrations have no remote authentication type and can be selected using `transport=stdio`.
+
+```sh
+agent-tcdh target list --q documentation --transport streamable-http --auth none --view summary
+```
+
+Send the same options as HTTP query parameters or as arguments in MCP and structured A2A searches. Both filters can be combined with keyword, protocol, enabled-state, and tag filters. The filters use registered metadata. The consumer establishes the connection and supplies any required credentials. Omit the connection filters when querying an older hub.
+
+### Compare candidates with summary search
+
+Use `view=summary` in HTTP search, `--view summary` in the CLI, or `view: "summary"` in MCP and structured A2A search arguments. Both views use the same matching rules, ranking, filters, and pagination. An omitted `view` returns complete target metadata as usual and works with older hubs.
+
+```sh
+agent-tcdh target list --q "invoice export" --match normalized --view summary
+agent-tcdh target get billing-tools
+```
+
+Summary pages include `view: "summary"`, the usual pagination fields, and items with `id`, `name`, `protocol`, `transport`, `enabled`, a description excerpt, `capabilityCount`, and `matchedCapabilities`. Remote items also show `authType`. Each item shows up to three capabilities whose name or description matches at least one query term. Capabilities are ordered by the number of distinct terms matched, then by name matches and their order in the registration. An empty query or a match on target-level metadata alone can produce an empty `matchedCapabilities` array. Description excerpts are capped at 240 UTF-16 code units for targets and 160 for capabilities.
+
+Use `get_target`, `GET /api/targets/:id`, or `agent-tcdh target get ID` to retrieve the selected candidate's complete metadata, including its connection and capability input schemas.
+
+### Retrieve several selected targets
+
+Retrieve one to ten distinct target IDs in one read using repeated `--select` flags, the `get_targets` MCP tool, a structured A2A `get_targets` operation, or `POST /api/targets/lookup`.
+
+```sh
+agent-tcdh target get --select docs --select research
+```
+
+For HTTP and MCP, send `{"ids":["docs","research"]}`. For A2A, send `{"operation":"get_targets","arguments":{"ids":["docs","research"]}}` as the data part. Read credentials are sufficient on authenticated hubs.
+
+The response contains `items` in request order. Each item has an `id` and a `target` with the same complete metadata returned by a single lookup. A missing ID has `"target": null`. An explicitly selected disabled registration retains `enabled: false`. The successful batch includes all requested IDs, so consumers can decide how to handle missing entries. The hub reads all matching definitions from one SQLite statement.
+
+The hub rejects batches whose combined stored definitions exceed 4 MiB before returning any items. HTTP reports `413 TARGET_LOOKUP_TOO_LARGE`. Use smaller groups or a single lookup for large definitions. A single lookup also supports the existing revision header and CLI `--with-version`. Use the single-target lookup with older hubs.
+
+### Complete definitions
 
 Definitions contain `id`, `name`, `description`, `protocol`, `tags`, `capabilities`, `connection`, and optional `enabled` (default true). Capabilities have `name`, `description`, and optional `inputSchema`. Responses add `createdAt` and `updatedAt`.
 
@@ -191,6 +271,7 @@ Exports are validated against the same import limits, written completely and syn
 | POST | `/api/registry/import` | Import snapshot (administrator) |
 | POST | `/api/targets` | Register target, returning 201 |
 | GET | `/api/targets` | Search/filter/page targets |
+| POST | `/api/targets/lookup` | Retrieve several explicitly selected targets (read access) |
 | GET | `/api/targets/:id` | Retrieve target and connection metadata |
 | PUT | `/api/targets/:id` | Replace complete definition |
 | DELETE | `/api/targets/:id` | Delete, returning 204 |
@@ -207,7 +288,7 @@ For stdio discovery, start the HTTP hub first and configure the consumer with:
 {"mcpServers":{"agent-tcdh":{"command":"node","args":["/absolute/path/agent-tcdh/dist/index.js","mcp","--hub","http://127.0.0.1:3000"]}}}
 ```
 
-`search_targets` accepts keyword, protocol, tag, disabled-state, and page options. `get_target` retrieves current metadata by id. Additions, updates, and deletions become visible on the next lookup. The consumer decides how to connect and execute using the returned definition.
+`search_targets` accepts the [search parameters](#search-and-connection-definitions), including `match: "normalized"` for separator or Unicode differences and `view: "summary"` to compare candidates. Use `get_target` for one ID or [`get_targets`](#retrieve-several-selected-targets) for several IDs. Additions, updates, and deletions become visible on the next lookup. The consumer decides how to connect and execute using the returned definition.
 
 ### Codex CLI
 
@@ -243,9 +324,9 @@ curl http://127.0.0.1:3000/a2a \
   --data-binary '{"jsonrpc":"2.0","id":"find-docs","method":"SendMessage","params":{"message":{"messageId":"query-1","role":"ROLE_USER","parts":[{"data":{"operation":"search_targets","arguments":{"q":"documentation","protocol":"mcp"}}}]}}}'
 ```
 
-Add `Authorization: Bearer <token>` when configured. For a lookup, use `data: {"operation":"get_target","arguments":{"id":"docs"}}`. Structured search uses the same filters and pagination as MCP. A single text part becomes the literal keyword query; no language model interprets it. A single data part is also accepted; mixed parts and file input are rejected.
+Add `Authorization: Bearer <token>` when configured. For a lookup, use `data: {"operation":"get_target","arguments":{"id":"docs"}}`. Structured search uses the same matching options, filters, and pagination as MCP. A single text part becomes the literal keyword query. Mixed parts and file input are rejected.
 
-Native responses place SearchResult, Target, or an application `error` in `result.message.parts[0].data`. Setting `configuration.acceptedOutputModes` to `["text/plain"]` returns the same JSON as text. Invalid messages and unsupported operations return JSON-RPC errors.
+Native responses place SearchResult, SearchSummaryResult, Target, TargetLookupResult, or an application `error` in `result.message.parts[0].data`. Setting `configuration.acceptedOutputModes` to `["text/plain"]` returns the same JSON as text. Invalid messages and unsupported operations return JSON-RPC errors.
 
 Legacy messages use `kind: message`, `role: user`, and part `kind: text` or `data`; the response Message is directly under `result`. Versioned serialization uses the official SDK. See the [1.0 specification](https://a2a-protocol.org/v1.0.0/specification/) and [0.3 specification](https://a2a-protocol.org/v0.3.0/specification/).
 

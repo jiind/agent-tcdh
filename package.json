@@ -1,6 +1,6 @@
 {
   "name": "agent-tcdh",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Agent & Tool Capability Discovery Hub",
   "type": "module",
   "license": "Apache-2.0",

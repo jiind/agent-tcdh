@@ -28,6 +28,14 @@ npm run test:selection -- --count 8 --model YOUR_AVAILABLE_MODEL \
   --output /absolute/path/to/new-evidence-directory
 ```
 
+Use `--workflow summary-batch` to exercise the compact discovery flow:
+
+```sh
+npm run test:selection -- --count 5 --model YOUR_AVAILABLE_MODEL --workflow summary-batch
+```
+
+The audit requires exactly one summary search with required inputs, the fixture tag, and bearer authentication. It then requires one `get_targets` call containing precisely the chosen IDs. It records search and lookup counts, missing IDs, unrelated IDs, and target receipts. The default regression suite exercises the audit against synthetic events, including wrong IDs and redundant queries. The model results above used the single-lookup workflow.
+
 `--count` accepts 1 through 8 for this fixture catalog. Counts 3 and 5 were actually observed; the other accepted counts are not claimed as observed results. An explicit output directory must be new. The harness starts temporary hub/target listeners, supplies isolated per-run MCP configuration, captures redacted CLI output and request traces, validates receipts, and stops its processes. Personal agent configuration is unchanged. It does not automatically run in CI or switch to a different model if the selected model fails.
 
 ## Interpretation

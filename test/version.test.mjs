@@ -154,6 +154,7 @@ test("database migration preserves definitions, timestamps, and persistent revis
     ...target, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z",
   });
   assert.match(current.etag, /^"[0-9a-f-]+"$/);
+  assert.deepEqual(first.search({ q: "search_docs", offset: 0, limit: 20, includeDisabled: false }).items.map(({ id }) => id), ["legacy"]);
   first.close();
   const second = new TargetStore(path);
   assert.deepEqual(second.getVersioned("legacy"), current);

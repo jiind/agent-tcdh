@@ -5,7 +5,7 @@ import { searchResultSchema, searchSchema, targetDefinitionSchema } from "../tar
 import { importOptionsSchema, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_TARGETS, parseSnapshot, serializeSnapshot } from "./schema.js";
 import type { RegistrySnapshot } from "./schema.js";
 
-const fields = ["name", "description", "protocol", "tags", "capabilities", "connection", "enabled"] as const;
+const fields = ["name", "description", "protocol", "tags", "aliases", "capabilities", "connection", "enabled"] as const;
 type DiffStatus = "added" | "changed" | "unchanged" | "retained";
 export interface DiffEntry {
   id: string;
@@ -70,7 +70,8 @@ async function readDefinitions(client: Pick<HubClient, "search">): Promise<Regis
     }
     for (const target of page.items) {
       const portable = targetDefinitionSchema.parse({ id: target.id, name: target.name, description: target.description,
-        protocol: target.protocol, tags: target.tags, enabled: target.enabled, capabilities: target.capabilities, connection: target.connection });
+        protocol: target.protocol, tags: target.tags, ...(target.aliases ? { aliases: target.aliases } : {}),
+        enabled: target.enabled, capabilities: target.capabilities, connection: target.connection });
       bytes += Buffer.byteLength(JSON.stringify(portable), "utf8");
       if (bytes > MAX_SNAPSHOT_BYTES) {
         throw new Error("Registry comparison definitions exceed the 16 MiB snapshot limit.");
