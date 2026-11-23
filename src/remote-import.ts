@@ -253,7 +253,7 @@ export async function refreshDefinition(
   // 3. Merge new capabilities and the A2A connection contract into the latest managed definition.
   const target = targetDefinitionSchema.parse({
     id: latest.id, name: latest.name, description: latest.description,
-    protocol: latest.protocol, tags: latest.tags, enabled: latest.enabled,
+    protocol: latest.protocol, tags: latest.tags, ...(latest.aliases ? { aliases: latest.aliases } : {}), enabled: latest.enabled,
     capabilities: inspected.capabilities, connection,
   });
   return { target, etag: current.etag };

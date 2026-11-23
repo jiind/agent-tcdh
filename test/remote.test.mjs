@@ -96,7 +96,7 @@ test("independent HTTP MCP clients query the same current registry", async (t) =
     clients.push(client);
   }
   assert.deepEqual((await clients[0].listTools()).tools.map((tool) => tool.name).sort(), [
-    "get_target", "search_targets",
+    "get_target", "get_targets", "search_targets",
   ]);
   const first = await clients[0].callTool({ name: "search_targets", arguments: { q: "문서" } });
   assert.equal(payload(first).total, 1);
@@ -125,6 +125,13 @@ test("OpenAPI request and response schemas and internal references can be valida
   const create = validator.compile({ $ref: "urn:agent-tcdh:openapi#/components/schemas/TargetDefinition" });
   const response = validator.compile({ $ref: "urn:agent-tcdh:openapi#/components/schemas/Target" });
   const list = validator.compile({ $ref: "urn:agent-tcdh:openapi#/components/schemas/SearchResult" });
+  const getTargets = spec.paths["/api/targets"].get;
+  assert.equal(getTargets.parameters.find(({ name }) => name === "view").schema.const, "summary");
+  assert.deepEqual(getTargets.parameters.find(({ name }) => name === "transport").schema.enum, ["stdio", "streamable-http", "sse", "http"]);
+  assert.deepEqual(getTargets.parameters.find(({ name }) => name === "auth").schema.enum, ["none", "bearer", "api-key", "oauth2"]);
+  assert.equal(getTargets.parameters.find(({ name }) => name === "suggest").schema.type, "boolean");
+  const { oneOf } = getTargets.responses[200].content["application/json"].schema;
+  const searchResponse = validator.compile({ oneOf: oneOf.map(({ $ref }) => ({ $ref: "urn:agent-tcdh:openapi" + $ref })) });
   const input = definition("schema", {
     capabilities: [{ name: "nested", inputSchema: { type: "object", nested: { values: [1, null, true, { deeper: "value" }] } } }],
   });
@@ -135,6 +142,24 @@ test("OpenAPI request and response schemas and internal references can be valida
   assert.equal(response({ ...saved, connection: { transport: "stdio", url: "https://invalid.example" } }), false);
   const results = (await app.inject("/api/targets")).json();
   assert.ok(list(results), JSON.stringify(list.errors));
+  assert.ok(searchResponse(results), JSON.stringify(searchResponse.errors));
+  const summary = (await app.inject("/api/targets?view=summary&q=nested&transport=streamable-http&auth=none")).json();
+  assert.ok(searchResponse(summary), JSON.stringify(searchResponse.errors));
+  assert.equal(summary.items[0].transport, "streamable-http");
+  assert.equal(summary.items[0].authType, "none");
+  assert.equal(list(summary), false);
+  const suggested = (await app.inject("/api/targets?q=documentation%20nested%20archived&suggest=true")).json();
+  assert.ok(searchResponse(suggested), JSON.stringify(searchResponse.errors));
+  assert.equal(suggested.suggestions[0].missingTerm, "archived");
+  assert.equal(searchResponse({ ...summary, items: [{ ...summary.items[0], connection: saved.connection }] }), false);
+  assert.equal(spec.paths["/api/targets/lookup"].post["x-required-role"], "read");
+  const lookupRequest = validator.compile({ $ref: "urn:agent-tcdh:openapi#/components/schemas/TargetLookup" });
+  const lookupResult = validator.compile({ $ref: "urn:agent-tcdh:openapi#/components/schemas/TargetLookupResult" });
+  const query = { ids: ["missing", "schema"] };
+  assert.equal(lookupRequest(query), true);
+  assert.equal(lookupRequest({ ids: ["schema", "schema"] }), false);
+  const lookup = (await app.inject({ method: "POST", url: "/api/targets/lookup", payload: query })).json();
+  assert.ok(lookupResult(lookup), JSON.stringify(lookupResult.errors));
 });
 
 test("OpenAPI reflects actual authentication configuration and public health endpoints", async (t) => {

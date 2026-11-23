@@ -26,6 +26,14 @@ These are machine-specific launch paths. Generate settings in the environment wh
 
 The existing `codex`, `opencode`, and `opencode-v1` profiles continue to generate direct Streamable HTTP hub connections. The new profiles use the existing local bridge to share its explicit credential handling without depending on client-specific HTTP authentication behavior. Target execution continues directly from the consuming environment.
 
+| Direct HTTP profile | Configuration layout | Credential reference |
+| --- | --- | --- |
+| `codex` | TOML `mcp_servers.<name>` | `bearer_token_env_var` |
+| `opencode-v1` | JSONC `mcp.<name>` | `Bearer {env:NAME}` header |
+| `opencode` for OpenCode 2.x | JSONC `mcp.servers.<name>` | `Bearer {env:NAME}` header |
+
+The regression suite parses each generated layout, connects an MCP SDK client to an authenticated loopback hub, and completes a first summary search. To record a native OpenCode binary's initialization, run `npm run test:agents -- --agent opencode --connection-only`. The harness selects the generated profile by the installed major version and records the version, profile, and authenticated initialization. Model-driven native search uses the separate opt-in execution harness.
+
 ## Merge into a selected file
 
 ```sh
@@ -37,6 +45,8 @@ agent-tcdh connect vscode --write /path/to/project/.vscode/mcp.json
 ```
 
 `--write FILE` is explicit application. Preview with `--dry-run` first when a file already exists. JSONC merging preserves unrelated entries, settings, comments, and a UTF-8 BOM. Replacements keep an exact backup. Identical settings are a no-op; a conflicting named entry requires `--replace`, or use `--name` to add a different connection. A file containing only the other known server container is rejected instead of receiving an unused entry.
+
+Use `connect CLIENT --write FILE --plan` to preview a conflicting entry before authorizing replacement. The plan reports an add, an unchanged entry, or a replacement and lists the recognized fields whose settings differ. It reveals neither the previous values nor stored credential values.
 
 The normal result describes transport, required variable names, and next steps. It does not echo unrelated file content. `--print` emits only the new fragment, even when redirected. The generator does not enable automatic tool approvals or modify client trust policies. Reload the selected client and complete its normal setup/trust requirements.
 

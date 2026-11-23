@@ -4,10 +4,12 @@ import type { ReadStream, WriteStream } from "node:tty";
 interface Choice { key: string; name: string; protocol: string; status: string }
 
 /** Select local connection keys with a terminal checkbox list, restoring terminal state on every exit. */
-export async function selectImportEntries(choices: Choice[], input = process.stdin as ReadStream, output = process.stderr as WriteStream): Promise<string[]> {
+export async function selectImportEntries(choices: Choice[], input = process.stdin as ReadStream, output = process.stderr as WriteStream,
+  targets?: { limit: number }): Promise<string[]> {
   // 1. Require a real terminal; automation uses explicit --select keys instead of simulated interaction.
   if (!input.isTTY || !output.isTTY || !input.setRawMode) {
-    throw new Error("Interactive import requires a terminal. Use --select KEY for automation.");
+    throw new Error(targets ? "Interactive target selection requires a terminal. Use target get --select ID for automation."
+      : "Interactive import requires a terminal. Use --select KEY for automation.");
   }
   const available = choices.filter((choice) => choice.status !== "excluded");
   if (!available.length || available.length > 1000) {
@@ -30,9 +32,10 @@ export async function selectImportEntries(choices: Choice[], input = process.std
       }
       const start = Math.max(0, Math.min(cursor - 5, available.length - 10));
       const visible = available.slice(start, start + 10);
-      const rows = ["Select connections: arrows move, space toggles, a toggles all.", "Enter accepts; Esc/Ctrl+C cancels. No items are preselected.",
+      const rows = [targets ? "Select up to " + targets.limit + " targets: arrows move, space toggles."
+        : "Select connections: arrows move, space toggles, a toggles all.", "Enter accepts; Esc/Ctrl+C cancels. No items are preselected.",
         ...visible.map((choice, index) => (start + index === cursor ? "> " : "  ") + (selected.has(choice.key) ? "[x] " : "[ ] ")
-          + JSON.stringify(choice.key) + " (" + choice.protocol + ", " + choice.status + ")"),
+          + JSON.stringify(choice.key) + " (" + choice.protocol + (targets ? ") " + choice.name.replace(/[\p{Cc}\p{Cf}]/gu, " ") : ", " + choice.status + ")")),
         selected.size + " selected; " + (cursor + 1) + "/" + available.length + "."];
       const width = Math.max(30, (output.columns || 100) - 1);
       output.write(rows.map((row) => row.length > width ? row.slice(0, width - 3) + "..." : row).join("\n") + "\n");
@@ -66,7 +69,7 @@ export async function selectImportEntries(choices: Choice[], input = process.std
     /** Interpret checkbox navigation without treating typed text as executable commands. */
     function keypress(_text: string, key: { name?: string; ctrl?: boolean }) {
       if (key.name === "escape" || key.ctrl && key.name === "c") {
-        finish(new Error("Import selection cancelled; no registry or profile changes."));
+        finish(new Error(targets ? "Target selection cancelled." : "Import selection cancelled; no registry or profile changes."));
         return;
       }
       if (key.name === "up") {
@@ -77,10 +80,10 @@ export async function selectImportEntries(choices: Choice[], input = process.std
         const choice = available[cursor]!;
         if (selected.has(choice.key)) {
           selected.delete(choice.key);
-        } else {
+        } else if (!targets || selected.size < targets.limit) {
           selected.add(choice.key);
         }
-      } else if (key.name === "a") {
+      } else if (key.name === "a" && !targets) {
         if (selected.size === available.length) {
           selected.clear();
         } else {

@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastif
 import { ZodError } from "zod";
 import { HubError } from "./errors.js";
 import { TargetStore } from "./targets/store.js";
-import { searchQuerySchema, targetDefinitionSchema, targetIdSchema } from "./targets/schema.js";
+import { searchQuerySchema, targetDefinitionSchema, targetIdSchema, targetLookupSchema } from "./targets/schema.js";
 import { registerHttpDiscovery } from "./mcp-http.js";
 import { createOpenApiDocument } from "./openapi.js";
 import { importQuerySchema, MAX_SNAPSHOT_BYTES, parseSnapshot } from "./registry/schema.js";
@@ -106,6 +106,10 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   });
   app.get("/api/targets", { config: { access: "read" } }, async (request) => {
     return store.search(searchQuerySchema.parse(request.query));
+  });
+  app.post("/api/targets/lookup", { config: { access: "read" } }, async (request, reply) => {
+    const { ids } = targetLookupSchema.parse(request.body);
+    return reply.header("Cache-Control", "no-store").send(store.getMany(ids));
   });
   app.get<{ Params: { id: string } }>("/api/targets/:id", { config: { access: "read" } }, async (request, reply) => {
     const result = store.getVersioned(targetIdSchema.parse(request.params.id));

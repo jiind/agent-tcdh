@@ -14,7 +14,7 @@ export interface SyncItem {
   action: SyncAction;
   origins: string[];
   fields: ImportField[];
-  hubModifiedFields: ImportField[];
+  hubModifiedFields: (ImportField | "aliases")[];
   issue?: string;
   version?: string;
 }
@@ -117,7 +117,8 @@ export async function planImportSync(client: SyncClient, profile: ImportProfile,
       acceptedFields.push("capabilities");
     }
     const target = targetDefinitionSchema.parse({ id, name: merged.name, description: merged.description, protocol: merged.protocol,
-      connection: merged.connection, capabilities: merged.capabilities, tags: merged.tags, enabled: merged.enabled });
+      connection: merged.connection, capabilities: merged.capabilities, tags: merged.tags,
+      ...(merged.aliases ? { aliases: merged.aliases } : {}), enabled: merged.enabled });
     const fields = importFields.filter((field) => !isDeepStrictEqual(current.target[field], target[field]));
     operations.push({ id, origins, action: fields.length ? "updated" : "unchanged", fields, hubModifiedFields: hubModified,
       incoming: target, binding: previous, sourceHashes: nextHashes, acceptedFields, version: current.etag });
@@ -128,9 +129,10 @@ export async function planImportSync(client: SyncClient, profile: ImportProfile,
     const current = await currentTarget(client, binding.id);
     const hashes = current ? definitionHashes(current.target) : undefined;
     const modified = hashes ? importFields.filter((field) => field !== "capabilities" && hashes[field] !== binding.destinationHashes[field]) : [];
-    operations.push({ id: binding.id, origins: binding.origins, binding, fields: [], hubModifiedFields: modified,
-      action: !current ? "forgotten" : !prune ? "retained" : modified.length ? "conflict" : "removed",
-      ...(current ? { version: current.etag } : {}), ...(prune && modified.length ? { issue: "ORPHAN_CHANGED_IN_HUB" } : {}) });
+    const hubModifiedFields = current?.target.aliases?.length ? [...modified, "aliases" as const] : modified;
+    operations.push({ id: binding.id, origins: binding.origins, binding, fields: [], hubModifiedFields,
+      action: !current ? "forgotten" : !prune ? "retained" : hubModifiedFields.length ? "conflict" : "removed",
+      ...(current ? { version: current.etag } : {}), ...(prune && hubModifiedFields.length ? { issue: "ORPHAN_CHANGED_IN_HUB" } : {}) });
   }
   return summary(operations);
 }

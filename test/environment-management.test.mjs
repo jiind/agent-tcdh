@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -9,7 +9,9 @@ import { manageHubProfile, readHubProfiles } from "../dist/onboarding/hub-profil
 import { editImportProfile } from "../dist/onboarding/import-profile-edit.js";
 import { importLocalWorkflow, syncLocalWorkflow } from "../dist/onboarding/import-workflow.js";
 import { readImportProfile } from "../dist/onboarding/import-profiles.js";
+import { watchImportSources } from "../dist/onboarding/sync-watch.js";
 import { managementStatus } from "../dist/onboarding/status.js";
+import { formatCommand } from "../dist/onboarding/output.js";
 import { observeTargets } from "../dist/targets/observe.js";
 import { batchTargetOptionsSchema } from "../dist/targets/batch.js";
 import { definition, fixture, temporaryDirectory } from "./helpers.mjs";
@@ -118,6 +120,12 @@ test("status reports source drift, missing references and unknown metadata witho
   assert.equal(result.counts.total, 1);
   assert.equal(result.freshness.items[0].state, "unknown");
   assert.deepEqual(result.variables, [{ name: "MISSING", available: false }]);
+  const actions = Object.fromEntries(result.actions.map((action) => [action.section, action]));
+  assert.ok(actions.freshness.command.includes("--stale-only"));
+  assert.ok(!actions.freshness.command.includes("--apply"));
+  assert.deepEqual(actions.environment.variables, ["MISSING"]);
+  const missingHub = await managementStatus({ hub, tokenEnv: "HUB_READER" }, {});
+  assert.equal(missingHub.actions[0].command.at(-1), "HUB_READER");
   assert.equal(provider.state.listCalls, 0);
   assert.equal(result.providerRequests, false);
   assert.equal(result.executionVerified, false);
@@ -140,6 +148,19 @@ test("observations preview offline, persist metadata only, select stale/failures
   assert.equal(fresh.items[0].status, "passed");
   assert.equal((await observeTargets(client, options, { apply: true, staleOnly: true })).outcomes.length, 0);
   assert.equal(provider.state.calls, 0);
+});
+
+test("batch observation retains literal target membership with discovery normalization available", async (t) => {
+  const app = await fixture(t);
+  const hub = await app.listen({ host: "127.0.0.1", port: 0 });
+  const client = new HubClient(hub);
+  await client.create(definition("backup-tool", { name: "Backup Restore" }));
+  await client.create(definition("backup-restore", { name: "Backup Restore" }));
+  const q = "backup-restore";
+  const discovery = await client.search({ q, match: "normalized" });
+  assert.deepEqual(discovery.items.map((item) => item.id), ["backup-restore", "backup-tool"]);
+  const observation = await observeTargets(client, batchTargetOptionsSchema.parse({ q }), {});
+  assert.deepEqual(observation.outcomes.map((item) => item.id), ["backup-restore"]);
 });
 
 test("concurrent definition edits prevent a metadata observation from being stamped as current", async (t) => {
@@ -170,6 +191,7 @@ test("guided setup previews without writes and applies registration/profile/clie
     "--scope", "project", "--select", "cursor-project/docs", "--write", file, "--save-profile", "work", "--profiles-file", profiles];
   const preview = JSON.parse((await cli(dir, flags, { AGENT_TCDH_CONFIG: "" })).stdout);
   assert.equal(preview.applied, false);
+  assert.equal(preview.connection.plan.action, "add");
   await assert.rejects(readFile(file));
   await assert.rejects(readFile(profiles));
   const applied = JSON.parse((await cli(dir, [...flags, "--apply", "--token-env", "ADMIN"], { ADMIN: "admin", AGENT_TCDH_CONFIG: "" })).stdout);
@@ -191,6 +213,11 @@ test("setup preflights conflicting client files before registration and profile 
   await writeFile(destination, '[mcp_servers.agent_tcdh]\nurl="https://unrelated.example/mcp"\n');
   const app = await fixture(t);
   const hub = await app.listen({ host: "127.0.0.1", port: 0 });
+  const preview = JSON.parse((await cli(dir, ["setup", "--yes", "--client", "codex", "--hub", hub, "--home", home, "--project", project,
+    "--scope", "project", "--select", "cursor-project/docs", "--write", destination, "--plan"], { AGENT_TCDH_CONFIG: "" })).stdout);
+  assert.equal(preview.connection.plan.action, "replace");
+  assert.equal(preview.connection.plan.requiresReplace, true);
+  assert.doesNotMatch(JSON.stringify(preview.connection), /unrelated\.example/u);
   await assert.rejects(cli(dir, ["setup", "--yes", "--client", "codex", "--hub", hub, "--home", home, "--project", project,
     "--scope", "project", "--select", "cursor-project/docs", "--write", destination, "--apply"], { AGENT_TCDH_CONFIG: "" }), /already|replace/);
   assert.equal((await app.inject("/api/targets")).json().total, 0);
@@ -200,6 +227,42 @@ test("setup preflights conflicting client files before registration and profile 
   await writeFile(file, '{"secret-value":');
   await assert.rejects(editImportProfile("work", profilesFile, { allSources: true, apply: true }), /not ready/);
   assert.equal(await readFile(profilesFile, "utf8"), previous);
+});
+
+test("watching pinned sources emits synchronization previews and leaves the registry and profile intact", async (t) => {
+  const dir = await temporaryDirectory(t);
+  const project = join(dir, "project");
+  const profileFile = join(dir, "profiles.json");
+  const file = join(project, ".cursor", "mcp.json");
+  await source(file, { docs: { url: "https://before.example/mcp" } });
+  const app = await fixture(t);
+  const hub = await app.listen({ host: "127.0.0.1", port: 0 });
+  const client = new HubClient(hub);
+  const imported = await importLocalWorkflow(client, hub, { project, home: join(dir, "home"), scope: "project", clients: ["cursor"],
+    apply: true, saveProfile: "work", profilesFile: profileFile });
+  assert.equal(imported.applied, true);
+  const originalProfile = await readFile(profileFile, "utf8");
+  const abort = new AbortController();
+  t.after(() => abort.abort());
+  const events = [];
+  const initial = Promise.withResolvers();
+  const recording = watchImportSources(client, hub, { profile: "work", profilesFile: profileFile, interval: 15,
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(4500)]) }, (event) => {
+    events.push(event);
+    initial.resolve();
+    if (event.event === "source-changed" && event.plan.items.some((item) => item.action === "updated")) {
+      abort.abort();
+    }
+  });
+  await Promise.race([initial.promise, recording]);
+  assert.equal(events[0].event, "initial");
+  await source(file, { docs: { url: "https://replacement.example/mcp" } });
+  await recording;
+  assert.equal(events.at(-1).event, "source-changed");
+  assert.equal(events.at(-1).applied, false);
+  const [binding] = (await readImportProfile("work", profileFile)).bindings;
+  assert.equal((await client.get(binding.id)).connection.url, "https://before.example/mcp");
+  assert.equal(await readFile(profileFile, "utf8"), originalProfile);
 });
 
 test("guided setup reports a later client-file failure while retaining acknowledged registrations", async (t) => {
@@ -224,7 +287,57 @@ test("guided setup reports a later client-file failure while retaining acknowled
   assert.equal(result.applied, true);
   assert.equal(result.connectionFailed, true);
   assert.equal(result.failed, true);
+  assert.match(result.connectionFailure.message, /already exists/);
+  assert.ok(!result.connectionFailure.retryCommand.includes("--replace"));
+  assert.doesNotMatch(JSON.stringify(result.connectionFailure), /concurrent\.example/);
   assert.equal((await readImportProfile("work", profilesFile)).bindings.length, 1);
   assert.equal((await app.inject("/api/targets")).json().total, 1);
   assert.match(await readFile(destination, "utf8"), /concurrent.example/);
+});
+
+test("the setup CLI provides a shell-ready retry with the same hub, destination, and read reference", async (t) => {
+  const dir = await temporaryDirectory(t);
+  const home = join(dir, "home");
+  const project = join(dir, "project");
+  const profiles = join(dir, "hubs.json");
+  const destination = join(dir, "client's $settings.toml");
+  const lock = destination + ".agent-tcdh.lock";
+  const previous = '[mcp_servers.agent_tcdh]\nurl="https://previous.example/mcp"\n';
+  await source(join(project, ".cursor/mcp.json"), { docs: { url: "https://docs.example/mcp" } });
+  await writeFile(destination, previous);
+  await writeFile(lock, "held by test");
+  const app = await fixture(t, { token: "fixture-admin-value", readToken: "fixture-reader-value" });
+  const hub = await app.listen({ host: "127.0.0.1", port: 0 });
+  await manageHubProfile("save", "workspace", profiles, { hub, tokenEnv: "FIXTURE_ADMIN", readTokenEnv: "FIXTURE_READER" }, true);
+  let report;
+  await assert.rejects(cli(dir, ["setup", "--yes", "--client", "codex", "--home", home, "--project", project,
+    "--scope", "project", "--select", "cursor-project/docs", "--write", destination, "--hub-profile", "workspace",
+    "--hub-profiles-file", profiles, "--apply", "--replace"], { FIXTURE_ADMIN: "fixture-admin-value", FIXTURE_READER: "fixture-reader-value" }), (error) => {
+    assert.equal(error.code, 1);
+    assert.doesNotMatch(error.stdout, /fixture-admin-value|fixture-reader-value/);
+    report = JSON.parse(error.stdout);
+    return true;
+  });
+  assert.equal(report.registration.applied, true);
+  assert.equal(report.connectionFailed, true);
+  assert.match(report.connectionFailure.message, /write is in progress/);
+  assert.deepEqual(report.connectionFailure.retryCommand.slice(2), ["connect", "codex", "--hub", hub, "--write", destination,
+    "--token-env", "FIXTURE_READER", "--hub-profile", "workspace", "--hub-profiles-file", profiles, "--replace"]);
+  const client = new HubClient(hub, "fixture-reader-value");
+  const id = report.registration.targets[0].id;
+  const before = await client.getVersioned(id);
+  assert.equal(await readFile(destination, "utf8"), previous);
+  await unlink(lock);
+
+  const windows = process.platform === "win32";
+  const command = formatCommand(report.connectionFailure.retryCommand);
+  const { stdout } = await execute(windows ? "powershell.exe" : "/bin/sh", windows
+    ? ["-NoProfile", "-NonInteractive", "-Command", command] : ["-c", command], { cwd: dir, timeout: 20000,
+    env: { ...process.env, AGENT_TCDH_CONFIG: join(dir, "absent-config.json") } });
+  const connected = JSON.parse(stdout);
+  assert.equal(connected.changed, true);
+  assert.deepEqual(connected.requiredEnvironmentVariables, ["FIXTURE_READER"]);
+  assert.equal(await readFile(connected.backup, "utf8"), previous);
+  assert.deepEqual(await client.getVersioned(id), before);
+  assert.equal((await client.search({})).total, 1);
 });

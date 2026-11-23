@@ -9,11 +9,12 @@ import { z } from "zod";
 import { PACKAGE_VERSION } from "./version.js";
 import { HubError } from "./errors.js";
 import type { DiscoveryReader } from "./mcp.js";
-import { searchSchema, targetIdSchema } from "./targets/schema.js";
+import { discoverySearchSchema, targetIdSchema, targetLookupSchema } from "./targets/schema.js";
 
 export const discoveryCommandSchema = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("search_targets"), arguments: searchSchema.prefault({}) }),
+  z.strictObject({ operation: z.literal("search_targets"), arguments: discoverySearchSchema.prefault({}) }),
   z.strictObject({ operation: z.literal("get_target"), arguments: z.strictObject({ id: targetIdSchema }) }),
+  z.strictObject({ operation: z.literal("get_targets"), arguments: targetLookupSchema }),
 ]);
 export type DiscoveryCommand = z.infer<typeof discoveryCommandSchema>;
 
@@ -33,12 +34,15 @@ export function createHubAgentCard(baseUrl: string, authEnabled: boolean): Agent
     defaultOutputModes: ["application/json", "text/plain"],
     skills: [
       { id: "search_targets", name: "Search targets", tags: ["discovery", "mcp", "a2a"],
-        description: "data: {operation: 'search_targets', arguments: {q?, protocol?, tag?, includeDisabled?, limit?, offset?}}. "
-          + "A text part contains search keywords. An empty query lists enabled targets.",
+        description: "data: {operation: 'search_targets', arguments: {q?, match?, view?, suggest?, protocol?, transport?, auth?, tag?, includeDisabled?, limit?, offset?, cursor?, explain?, inputs?, freshness?, withFreshness?, staleHours?}}. "
+          + "Use summary view with inputs=true to compare required parameters, explain=true for match and filter details, and cursor='start' for change-aware pagination. A text part contains search keywords.",
         examples: ["document search", '{"operation":"search_targets","arguments":{"protocol":"a2a"}}'] },
       { id: "get_target", name: "Get connection details", tags: ["discovery", "connection"],
         description: "data: {operation: 'get_target', arguments: {id}}. Returns current connection details.",
         examples: ['{"operation":"get_target","arguments":{"id":"docs"}}'] },
+      { id: "get_targets", name: "Get connections for selected targets", tags: ["discovery", "connection"],
+        description: "data: {operation: 'get_targets', arguments: {ids}}. Returns up to ten selected targets in request order, using null for missing targets.",
+        examples: ['{"operation":"get_targets","arguments":{"ids":["docs","research"]}}'] },
     ],
   });
 
@@ -112,8 +116,11 @@ export function createA2aDiscoveryHandler(
       }
       let result: unknown;
       try {
-        result = command.operation === "search_targets"
-          ? await reader.search(command.arguments) : await reader.get(command.arguments.id);
+        switch (command.operation) {
+          case "search_targets": result = await reader.search(command.arguments); break;
+          case "get_target": result = await reader.get(command.arguments.id); break;
+          case "get_targets": result = await reader.getMany(command.arguments.ids); break;
+        }
       } catch (error) {
         if (!(error instanceof HubError)) {
           throw new Error("Unable to complete the hub query.");

@@ -20,6 +20,7 @@ test("MCP discovery preserves the connection when HTTP failures become tool erro
       throw new Error("HTTP 401 UNAUTHORIZED");
     },
     get: async () => definition(),
+    getMany: async (ids) => ({ items: ids.map((id) => ({ id, target: null })) }),
   });
   const client = new Client({ name: "test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -56,7 +57,7 @@ test("actual stdio MCP clients see current registry additions, updates, and dele
   });
   await client.connect(transport);
   assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [
-    "get_target", "search_targets",
+    "get_target", "get_targets", "search_targets",
   ]);
 
   const found = payload(await client.callTool({
@@ -65,8 +66,24 @@ test("actual stdio MCP clients see current registry additions, updates, and dele
   assert.equal(found.total, 1);
   assert.equal(found.items[0].connection.url, "http://127.0.0.1:1/mcp");
   assert.equal(payload(await client.callTool({
+    name: "search_targets", arguments: { q: "배포_가이드" },
+  })).total, 0);
+  assert.equal(payload(await client.callTool({
+    name: "search_targets", arguments: { q: "배포_가이드", match: "normalized" },
+  })).items[0].id, "docs");
+  const summary = payload(await client.callTool({ name: "search_targets",
+    arguments: { q: "자료", view: "summary", transport: "streamable-http", auth: "none" } }));
+  assert.equal(summary.view, "summary");
+  assert.equal(summary.items[0].transport, "streamable-http");
+  assert.equal(summary.items[0].authType, "none");
+  assert.deepEqual(summary.items[0].matchedCapabilities, [{ name: "search_docs", description: "공식 자료 조사" }]);
+  assert.equal(Object.hasOwn(summary.items[0], "connection"), false);
+  assert.equal(payload(await client.callTool({
     name: "get_target", arguments: { id: "docs" },
   })).id, "docs");
+  const batch = payload(await client.callTool({ name: "get_targets", arguments: { ids: ["unknown", "docs"] } }));
+  assert.deepEqual(batch.items, [{ id: "unknown", target: null }, { id: "docs", target: found.items[0] }]);
+  assert.equal((await client.callTool({ name: "get_targets", arguments: { ids: ["docs", "docs"] } })).isError, true);
 
   await app.inject({
     method: "PUT", url: "/api/targets/docs",

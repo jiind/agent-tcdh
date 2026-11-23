@@ -48,7 +48,7 @@ test("public cards describe versioned discovery and authentication without listi
     assert.equal(response.headers.vary, "A2A-Version");
     assert.equal(response.headers["cache-control"], "no-store");
     const card = response.json();
-    assert.deepEqual(card.skills.map((skill) => skill.id), ["search_targets", "get_target"]);
+    assert.deepEqual(card.skills.map((skill) => skill.id), ["search_targets", "get_target", "get_targets"]);
     assert.equal(card.capabilities.streaming, false);
     assert.equal(card.capabilities.pushNotifications, false);
     if (version === "1.0") {
@@ -82,6 +82,14 @@ test("A2A 1.0 and 0.3 query the same live registry and immediately reflect chang
     const filtered = result(await send(app, { operation: "search_targets", arguments: { protocol: "a2a", tag: "review", limit: 1 } }, version), version);
     assert.equal(filtered.total, 1);
     assert.equal(filtered.items[0].connection.protocolVersion, "1.0");
+    const normalized = result(await send(app, { operation: "search_targets",
+      arguments: { q: "배포_가이드", match: "normalized", protocol: "a2a" } }, version), version);
+    assert.deepEqual(normalized.items.map((item) => item.id), ["reviewer"]);
+    const summary = result(await send(app, { operation: "search_targets",
+      arguments: { q: "자료", view: "summary", protocol: "a2a" } }, version), version);
+    assert.equal(summary.view, "summary");
+    assert.deepEqual(summary.items[0].matchedCapabilities, [{ name: "search_docs", description: "공식 자료 조사" }]);
+    assert.equal(Object.hasOwn(summary.items[0], "connection"), false);
     assert.equal(result(await send(app, { operation: "search_targets", arguments: { includeDisabled: true, limit: 1, offset: 2 } }, version), version).total, 3);
   }
   await app.inject({ method: "PUT", url: "/api/targets/docs", payload: definition("docs", { name: "Updated" }) });
@@ -200,6 +208,7 @@ test("invalid parts, commands, filters, and output modes are rejected before SDK
   const app = await fixture(t);
   const invalidData = [null, [], { operation: "get_target", arguments: { id: "../x" } },
     { operation: "search_targets", arguments: { includeDisabled: "false" } },
+    { operation: "search_targets", arguments: { view: "unknown" } },
     { operation: "search_targets", arguments: { limit: 101 } },
     { operation: "search_targets", arguments: { q: "x".repeat(501) } },
     { operation: "search_targets", arguments: {}, execute: true }];
@@ -284,7 +293,7 @@ test("hub cards can be imported as A2A targets and invalid public URLs are rejec
       a2aBinding: "JSONRPC", a2aVersion: version }));
     assert.equal(target.connection.url, url + "/a2a");
     assert.equal(target.connection.protocolVersion, version);
-    assert.equal(target.capabilities.length, 2);
+    assert.equal(target.capabilities.length, 3);
   }
   for (const publicUrl of ["not-a-url", "ftp://hub.example.com", "https://user:secret@hub.example.com", "https://hub.example.com?q=x", "https://hub.example.com#x", "https://hub.example.com/?", "https://hub.example.com/#"]) {
     assert.equal(serverOptionsSchema.safeParse({ publicUrl }).success, false);
@@ -296,7 +305,7 @@ test("unexpected storage error details are excluded from A2A responses", async (
   function failRead() {
     throw new Error("private-db-secret");
   }
-  const handler = createA2aDiscoveryHandler({ search: failRead, get: failRead },
+  const handler = createA2aDiscoveryHandler({ search: failRead, get: failRead, getMany: failRead },
     createHubAgentCard("https://hub.example.com", false), { operation: "search_targets", arguments: {} });
   await assert.rejects(handler.sendMessage(SendMessageRequest.fromJSON({ message: { messageId: "id", role: "ROLE_USER", parts: [{ text: "" }] } })), (error) => {
     assert.equal(error.message.includes("private-db-secret"), false);
@@ -313,6 +322,8 @@ test("OpenAPI describes public cards, read access, and structured A2A query inpu
   const ajv = new Ajv2020({ strict: false });
   const validate = ajv.compile(doc.components.schemas.DiscoveryCommand);
   assert.equal(validate({ operation: "get_target", arguments: { id: "docs" } }), true);
+  assert.equal(validate({ operation: "get_targets", arguments: { ids: ["docs", "research"] } }), true);
+  assert.equal(validate({ operation: "get_targets", arguments: { ids: ["docs", "docs"] } }), false);
   assert.equal(validate({ operation: "search_targets", arguments: { protocol: "mcp", limit: 10 } }), true);
   assert.equal(validate({ operation: "execute", arguments: {} }), false);
 });

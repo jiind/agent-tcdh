@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { RegistryActivity, freshnessQuerySchema, historyQuerySchema, observationSchema } from "./registry/activity.js";
-import type { SearchOptions, SearchResult, Target, TargetDefinition } from "./targets/schema.js";
+import type { DiscoverySearchOptions, DiscoverySearchResult, SearchOptions, SearchResult,
+  SearchSummaryResult, Target, TargetDefinition, TargetLookupResult } from "./targets/schema.js";
 import type { ImportOptions, ImportResult, RegistrySnapshot } from "./registry/schema.js";
 import { hubTokenSchema } from "./auth.js";
 import { entityTag, parseIfMatch } from "./targets/version.js";
@@ -27,7 +28,10 @@ export class HubClient {
   }
 
   /** Encode search options as query parameters and retrieve current targets. */
-  async search(options: SearchOptions): Promise<SearchResult> {
+  search(options: SearchOptions): Promise<SearchResult>;
+  search(options: DiscoverySearchOptions & { view: "summary" }): Promise<SearchSummaryResult>;
+  search(options: DiscoverySearchOptions): Promise<DiscoverySearchResult>;
+  async search(options: DiscoverySearchOptions): Promise<DiscoverySearchResult> {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(options)) {
       if (value !== undefined && value !== "") {
@@ -35,12 +39,17 @@ export class HubClient {
       }
     }
 
-    return this.request<SearchResult>("api/targets?" + query.toString());
+    return this.request<DiscoverySearchResult>("api/targets?" + query.toString());
   }
 
   /** Retrieve a target's current capabilities and connection details. */
   async get(id: string): Promise<Target> {
     return this.request<Target>("api/targets/" + encodeURIComponent(id));
+  }
+
+  /** Retrieve selected targets in one read request. */
+  async getMany(ids: string[]): Promise<TargetLookupResult> {
+    return this.request<TargetLookupResult>("api/targets/lookup", "POST", { ids });
   }
 
   /** Retrieve the target and its strong version together. */

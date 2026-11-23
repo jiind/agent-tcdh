@@ -62,10 +62,13 @@ export async function verifyRuntime(url, credentials, marker, existing = false) 
   await requestJson(url, "/api/targets", undefined, "GET", undefined, 401);
   const ids = { mcp: marker + "-mcp", a2a: marker + "-a2a" };
   const definitions = ["mcp", "a2a"].map((protocol) => ({
-    id: ids[protocol], name: "Runtime " + protocol, description: "Deployment verification " + marker,
-    protocol, tags: [marker], capabilities: [{ name: "probe", description: "Deployment verification metadata" }],
+    id: ids[protocol], name: protocol === "mcp" ? "Runtime MCP" : "Runtime probe metadata services",
+    description: "Deployment verification " + marker, protocol, tags: [marker],
+    capabilities: protocol === "mcp" ? [{ name: "probe", description: "Read deployment metadata" }]
+      : [{ name: "probe", description: "Read health" }, { name: "metadata", description: "List properties" }],
     connection: protocol === "mcp" ? { transport: "streamable-http", url: "http://127.0.0.1:1/mcp" }
-      : { transport: "http", url: "http://127.0.0.1:1/a2a", protocolBinding: "JSONRPC", protocolVersion: "1.0" },
+      : { transport: "http", url: "http://127.0.0.1:1/a2a", protocolBinding: "JSONRPC", protocolVersion: "1.0",
+        auth: { type: "bearer", envVars: ["RUNTIME_TARGET_TOKEN"] } },
   }));
   await requestJson(url, "/api/targets", readToken, "POST", definitions[0], 403);
   if (!existing) {
@@ -73,9 +76,39 @@ export async function verifyRuntime(url, credentials, marker, existing = false) 
       await requestJson(url, "/api/targets", adminToken, "POST", definition, 201);
     }
   }
-  const http = await requestJson(url, "/api/targets?tag=" + marker, readToken);
+  const q = "probe metadata";
+  const searchPath = "/api/targets?" + new URLSearchParams({ q, tag: marker });
+  const http = await requestJson(url, searchPath, readToken);
   assert.equal(http.total, 2);
-  assert.deepEqual(new Set(http.items.map((item) => item.id)), new Set(Object.values(ids)));
+  assert.deepEqual(http.items.map((item) => item.id), [ids.mcp, ids.a2a]);
+  const summary = await requestJson(url, searchPath + "&view=summary", readToken);
+  assert.equal(summary.view, "summary");
+  assert.deepEqual(summary.items.map((item) => item.id), http.items.map((item) => item.id));
+  assert.ok(summary.items.every((item) => !Object.hasOwn(item, "connection") && item.matchedCapabilities[0].name === "probe"));
+  const filteredArgs = { q, tag: marker, view: "summary", transport: "http", auth: "bearer" };
+  const filtered = await requestJson(url, "/api/targets?" + new URLSearchParams(filteredArgs), readToken);
+  assert.equal(filtered.total, 1);
+  assert.equal(filtered.items[0].id, ids.a2a);
+  assert.equal(filtered.items[0].transport, "http");
+  assert.equal(filtered.items[0].authType, "bearer");
+  assert.doesNotMatch(JSON.stringify(filtered), /RUNTIME_TARGET_TOKEN/);
+  const explainArgs = { ...filteredArgs, explain: true, inputs: true, freshness: "unknown", cursor: "start" };
+  const explained = await requestJson(url, "/api/targets?" + new URLSearchParams(explainArgs), readToken);
+  assert.equal(explained.nextCursor, null);
+  assert.equal(explained.freshness[0].state, "unknown");
+  assert.equal(explained.explanations[0].id, ids.a2a);
+  assert.ok(explained.explanations[0].terms.every(({ fields }) => fields.length));
+  assert.equal(explained.items[0].matchedCapabilities[0].requiredInputs, null);
+  const suggestionArgs = { ...filteredArgs, q: q + " archival", suggest: true };
+  const suggested = await requestJson(url, "/api/targets?" + new URLSearchParams({ ...suggestionArgs, suggest: "true" }), readToken);
+  assert.equal(suggested.total, 0);
+  assert.deepEqual(suggested.items, []);
+  assert.deepEqual(suggested.suggestions.map(({ id, missingTerm }) => [id, missingTerm]), [[ids.a2a, "archival"]]);
+  const missing = marker + "-missing";
+  const selection = { ids: [ids.a2a, missing, ids.mcp] };
+  await requestJson(url, "/api/targets/lookup", undefined, "POST", selection, 401);
+  const details = await requestJson(url, "/api/targets/lookup", readToken, "POST", selection);
+  assert.deepEqual(details.items, [{ id: ids.a2a, target: http.items[1] }, { id: missing, target: null }, { id: ids.mcp, target: http.items[0] }]);
 
   // 2. Connect with a read token and verify HTTP MCP discovery and connection metadata.
   const mcp = new Client({ name: "deployment-probe", version: "1.0.0" });
@@ -83,10 +116,18 @@ export async function verifyRuntime(url, credentials, marker, existing = false) 
     await mcp.connect(new StreamableHTTPClientTransport(new URL(url + "/mcp"), {
       requestInit: { headers: { Authorization: "Bearer " + readToken } },
     }));
-    const search = await mcp.callTool({ name: "search_targets", arguments: { tag: marker } });
-    assert.equal(JSON.parse(search.content[0].text).total, 2);
+    const search = await mcp.callTool({ name: "search_targets", arguments: { tag: marker, view: "summary", q } });
+    assert.deepEqual(JSON.parse(search.content[0].text), summary);
+    const filteredSearch = await mcp.callTool({ name: "search_targets", arguments: filteredArgs });
+    assert.deepEqual(JSON.parse(filteredSearch.content[0].text), filtered);
+    const suggestedSearch = await mcp.callTool({ name: "search_targets", arguments: suggestionArgs });
+    assert.deepEqual(JSON.parse(suggestedSearch.content[0].text), suggested);
+    const explainedSearch = await mcp.callTool({ name: "search_targets", arguments: explainArgs });
+    assert.deepEqual(JSON.parse(explainedSearch.content[0].text), explained);
     const found = await mcp.callTool({ name: "get_target", arguments: { id: ids.a2a } });
     assert.equal(JSON.parse(found.content[0].text).connection.protocolVersion, "1.0");
+    const batch = await mcp.callTool({ name: "get_targets", arguments: selection });
+    assert.deepEqual(JSON.parse(batch.content[0].text), details);
   } finally {
     await mcp.close();
   }
@@ -113,9 +154,19 @@ export async function verifyRuntime(url, credentials, marker, existing = false) 
   const legacy = await factory.createFromAgentCard({ ...card,
     supportedInterfaces: [{ ...card.supportedInterfaces[0], protocolVersion: "0.3" }],
   });
-  const older = await legacy.sendMessage(SendMessageRequest.fromJSON({ message: {
-    messageId: randomUUID(), role: "ROLE_USER", parts: [{ data: { operation: "search_targets", arguments: { tag: marker } } }],
-  } }));
-  assert.equal(Message.toJSON(older).parts[0].data.total, 2);
-  return { http: true, permissions: true, mcp: true, a2a10: true, a2a03: true };
+  for (const agent of [client, legacy]) {
+    for (const [args, expected] of [[{ tag: marker, view: "summary", q }, summary], [filteredArgs, filtered],
+      [suggestionArgs, suggested], [explainArgs, explained]]) {
+      const found = await agent.sendMessage(SendMessageRequest.fromJSON({ message: {
+        messageId: randomUUID(), role: "ROLE_USER", parts: [{ data: { operation: "search_targets", arguments: args } }],
+      } }));
+      assert.deepEqual(Message.toJSON(found).parts[0].data, expected);
+    }
+    const batch = await agent.sendMessage(SendMessageRequest.fromJSON({ message: {
+      messageId: randomUUID(), role: "ROLE_USER", parts: [{ data: { operation: "get_targets", arguments: selection } }],
+    } }));
+    assert.deepEqual(Message.toJSON(batch).parts[0].data, details);
+  }
+  return { http: true, permissions: true, mcp: true, a2a10: true, a2a03: true, searchSummary: true, connectionFilters: true,
+    batchLookup: true, searchSuggestions: true, explainedDiscovery: true };
 }

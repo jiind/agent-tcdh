@@ -30,6 +30,14 @@ agent-tcdh registry sync-local --profile work --prune --apply
 
 Repeated `--select` replaces the fixed selection; `--all-sources` follows all declarations at the recorded locations. `--project` relocates project-scoped sources relative to the previous root. User sources remain pinned; `--source-path SOURCE_ID=PATH` relocates a known source explicitly. Use `import-profile show NAME` to obtain the source IDs. Paths become absolute. Edits inspect sources offline, require a ready preview before applying, and preserve all ownership fingerprints. They do not change the registry, its hub identity, prefix, or credentials. Removed selections remain tracked until a separate sync/prune decision. Normal conflict checks apply during synchronization.
 
+### Watch pinned sources
+
+```sh
+agent-tcdh registry sync-local --profile work --watch --watch-interval 5
+```
+
+The opt-in watcher emits an initial JSON line, followed by a fresh synchronization preview whenever a pinned file or the profile store changes. It detects file removal and atomic replacement. Each line includes the event type and the current plan. A temporarily unavailable profile or hub produces a diagnostic, then the watcher retries. Ctrl+C stops the watcher. It performs no writes, provider inspections, or target executions. Run a separate `registry sync-local --profile work --apply` after reviewing a plan.
+
 ## Inspect overall status
 
 ```sh
@@ -40,6 +48,8 @@ agent-tcdh status --profiles-file /path/to/import-profiles.json --stale-hours 48
 Status checks authenticated registry access, counts enabled/disabled registrations, reads stored metadata freshness, compares import profiles belonging to this hub with their current sources, and reports whether required environment names are available in this process. It does not fetch Agent Cards, contact MCP endpoints, launch stdio servers, mutate profiles, or execute tools/tasks. Profiles belonging to another hub are skipped. Missing or unsupported sources are reported without applying changes.
 
 The default scan cap is 1000 registrations and is configurable downwards. Freshness output is a bounded first page; use `target freshness --offset` to continue. Counts are live observations rather than an atomic registry snapshot. If discovery changes during a scan, the existing bounded selector refuses incomplete environment results. An older hub without freshness support receives a warning. Missing target variables and source issues are warnings; unavailable registry access exits 1.
+
+Status groups suggested commands by hub access, source changes, missing environment variables, and freshness. The JSON `actions` entries include the command as an argument array and any required variable names. Source and observation commands preview changes. Status does not print secret values.
 
 ## Track metadata freshness
 
@@ -87,4 +97,6 @@ agent-tcdh setup --yes --hub-profile work --client codex \
 
 Select a running hub with `--hub`, `--hub-profile`, or existing defaults. Interactive setup asks for the consuming client and source selection, previews connection generation and registration, and confirms explicit application. `--yes` requires an explicit consumer client and permits scripted use. Preview writes nothing, including the proposed import profile. A client configuration is written only when an explicit `--write FILE` and `--apply` are supplied. Without `--write`, the generated settings and instructions are returned for manual installation. Existing client entries require `--replace`; normal exact backups and conditional file checks apply.
 
-Registration, private profile updates, and client-file updates span separate systems and are not one distributed transaction. If a later client write fails, the result states that registrations may already exist and directs the user to retry `connect`, rather than blindly reimporting. Setup does not start a hub, log into an agent, launch the agent, or verify execution. Source files are reread by the existing import workflow before application. Review output and permissions before starting the consuming agent.
+Add `--plan` to `setup --write FILE` to preview a conflicting named connection without approving a replacement. The plan reports the action, field names, and whether the layout will be normalized. A replacement requires a subsequent `setup --apply --replace` command.
+
+Registration, private profile updates, and client-file updates commit independently. If registration succeeds and the client configuration fails, the command exits 1 and reports both outcomes. Fix the reported issue, then run the displayed `connect` command to finish client setup. JSON consumers can use `connectionFailure.message` and execute the argument array in `connectionFailure.retryCommand` when an output file was selected. The retry retains the destination, hub, credential reference, and any explicit `--replace`. Setup requires a running hub, and the user starts or reloads the consuming agent after applying the configuration. Source files are reread by the import workflow before application.

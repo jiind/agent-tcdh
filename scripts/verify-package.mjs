@@ -8,6 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { parse as parseToml } from "smol-toml";
 import { parseArgs } from "node:util";
 import { availablePort, runCommand, verifyRuntime, waitForHub } from "./smoke-runtime.mjs";
 
@@ -63,7 +65,8 @@ try {
     assert.ok(files.has(required), "Import-management artifact is missing: " + required);
   }
   for (const required of ["dist/onboarding/hub-profiles.js", "dist/onboarding/import-profile-edit.js", "dist/onboarding/status.js",
-    "dist/onboarding/setup.js", "dist/targets/observe.js", "dist/registry/activity.js", "docs/environment-management.md"]) {
+    "dist/onboarding/setup.js", "dist/onboarding/search-profiles.js", "dist/onboarding/sync-watch.js", "dist/onboarding/completion.js",
+    "dist/targets/observe.js", "dist/targets/search-index.js", "dist/registry/activity.js", "docs/environment-management.md", "docs/search-verification.md"]) {
     assert.ok(files.has(required), "Environment-management artifact is missing: " + required);
   }
   assert.equal([...files].some((file) => /^(src|test|node_modules|\.github)\//u.test(file) || /(^|\/)\.env(?:\.|$)|\.sqlite(?:$|-)/u.test(file)), false);
@@ -241,7 +244,7 @@ try {
   const managedProject = join(directory, "management project");
   const managedConsumer = join(directory, "management-consumer.toml");
   await mkdir(join(managedProject, ".cursor"), { recursive: true });
-  await writeFile(join(managedProject, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { observed: foreignCommand } }));
+  await writeFile(join(managedProject, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { "observed-docs": foreignCommand } }));
   /** Run an installed management command without reading or writing contributor client settings. */
   async function management(args) {
     const result = await runCommand(executable, [...prefix, ...args], { cwd: installation, env: environment });
@@ -252,13 +255,64 @@ try {
     "--token-env", "AGENT_TCDH_TOKEN", "--read-token-env", "AGENT_TCDH_READ_TOKEN", "--hub-profiles-file", hubProfiles, "--apply"])).applied, true);
   await management(["hub-profile", "use", "packaged-work", "--hub-profiles-file", hubProfiles, "--apply"]);
   const setupArgs = ["setup", ...hubFlags, "--yes", "--client", "codex", "--home", localHome, "--project", managedProject,
-    "--scope", "project", "--select", "cursor-project/observed", "--save-profile", "packaged-management", "--profiles-file", managementProfiles,
+    "--scope", "project", "--select", "cursor-project/observed-docs", "--save-profile", "packaged-management", "--profiles-file", managementProfiles,
     "--write", managedConsumer];
   assert.equal((await management(setupArgs)).applied, false);
   const guided = await management([...setupArgs, "--apply"]);
   assert.equal(guided.applied, true);
   assert.equal(guided.connection.changed, true);
+  const plan = await management(["connect", "codex", ...hubFlags, "--write", managedConsumer, "--plan"]);
+  assert.equal(plan.plan.action, "unchanged");
   const observedId = guided.registration.targets[0].id;
+  // Load the generated Codex connection with the MCP SDK and search for the newly imported target.
+  const generatedHub = parseToml(await readFile(managedConsumer, "utf8")).mcp_servers.agent_tcdh;
+  assert.equal(generatedHub.bearer_token_env_var, "AGENT_TCDH_READ_TOKEN");
+  const firstSearchClient = new Client({ name: "package-first-search", version: "1.0.0" });
+  try {
+    await firstSearchClient.connect(new StreamableHTTPClientTransport(new URL(generatedHub.url), { requestInit: {
+      headers: { Authorization: "Bearer " + environment[generatedHub.bearer_token_env_var] },
+    } }));
+    const firstSearch = await firstSearchClient.callTool({ name: "search_targets", arguments: { q: observedId, view: "summary" } });
+    assert.equal(firstSearch.isError, undefined);
+    const firstPage = JSON.parse(firstSearch.content[0].text);
+    assert.equal(firstPage.view, "summary");
+    assert.equal(firstPage.items[0].id, observedId);
+    assert.equal(Object.hasOwn(firstPage.items[0], "connection"), false);
+    const selection = await firstSearchClient.callTool({ name: "get_target", arguments: { id: observedId } });
+    assert.equal(JSON.parse(selection.content[0].text).connection.transport, "stdio");
+    const normalized = await firstSearchClient.callTool({ name: "search_targets", arguments: { q: "observed_docs", match: "normalized" } });
+    assert.equal(normalized.isError, undefined);
+    assert.equal(JSON.parse(normalized.content[0].text).items[0].id, observedId);
+  } finally {
+    await firstSearchClient.close();
+  }
+  assert.equal((await management(["target", "list", "--q", "observed_docs", ...hubFlags])).total, 0);
+  assert.equal((await management(["target", "list", "--q", "observed_docs", "--match", "normalized", ...hubFlags])).items[0].id, observedId);
+  const suggested = await management(["target", "list", "--suggest", "--transport", "stdio", "--match", "normalized",
+    "--q", "observed_docs archived", ...hubFlags]);
+  assert.equal(suggested.total, 0);
+  assert.deepEqual(suggested.items, []);
+  assert.equal(suggested.suggestions[0].id, observedId);
+  assert.equal(suggested.suggestions[0].missingTerm, "archived");
+  await management(["target", "edit", observedId, "--add-alias", "integrated-manual", ...hubFlags]);
+  const savedSearches = join(installation, "search-profiles.json");
+  await management(["search-profile", "save", "review", "--search-profiles-file", savedSearches, "--q", "integrated-manual",
+    "--explain", "--with-freshness", "--apply"]);
+  const saved = await management(["target", "list", "--search-profile", "review", "--search-profiles-file", savedSearches, "--cursor", "start", ...hubFlags]);
+  assert.equal(saved.items[0].id, observedId);
+  assert.deepEqual(saved.explanations[0].terms, [{ term: "integrated-manual", fields: ["alias"] }]);
+  assert.equal(saved.freshness[0].state, "unknown");
+  assert.equal(saved.nextCursor, null);
+  assert.equal((await management(["target", "list", "--search-profile", "review", "--search-profiles-file", savedSearches,
+    "--q", "zzzz-no-fixture-match", ...hubFlags])).total, 0);
+  const completion = await runCommand(executable, [...prefix, "completion", "bash"], { cwd: installation, env: environment });
+  assert.match(completion.stdout, /target list.+--search-profile/u);
+  const lookup = await runCommand(executable, [...prefix, "target", "get", "--select", "missing", "--select", observedId, ...hubFlags],
+    { cwd: installation, env: { ...environment, AGENT_TCDH_TOKEN: "" } });
+  const [missing, selected] = JSON.parse(lookup.stdout).items;
+  assert.deepEqual(missing, { id: "missing", target: null });
+  assert.equal(selected.id, observedId);
+  assert.equal(selected.target.connection.transport, "stdio");
   const profileEdit = ["import-profile", "edit", "packaged-management", "--profiles-file", managementProfiles, "--all-sources"];
   assert.equal((await management(profileEdit)).applied, false);
   assert.equal((await management([...profileEdit, "--apply"])).registryChanged, false);
@@ -266,6 +320,14 @@ try {
   const observation = await management(["target", "observe", "--select", observedId, ...hubFlags, "--apply", "--refresh", "--inspect-stdio"]);
   assert.equal(observation.outcomes[0].recorded, true);
   assert.equal(observation.outcomes[0].status, "passed");
+  const summary = await management(["target", "list", "--inputs", "--freshness", "fresh", "--transport", "stdio", "--q", "echo", ...hubFlags]);
+  assert.equal(summary.view, "summary");
+  const observedSummary = summary.items.find((item) => item.id === observedId);
+  assert.equal(observedSummary.transport, "stdio");
+  assert.equal(Object.hasOwn(observedSummary, "authType"), false);
+  assert.deepEqual(observedSummary.matchedCapabilities.map(({ name }) => name), ["echo"]);
+  assert.ok(Object.hasOwn(observedSummary.matchedCapabilities[0], "requiredInputs"));
+  assert.equal((await management(["target", "list", "--transport", "stdio", "--auth", "none", ...hubFlags])).total, 0);
   const overall = await management(["status", ...hubFlags, "--profiles-file", managementProfiles]);
   assert.equal(overall.failed, false);
   assert.equal(overall.providerRequests, false);
@@ -344,7 +406,7 @@ try {
   const bridgeClient = new Client({ name: "package-client-profile", version: "1.0.0" });
   try {
     await bridgeClient.connect(bridge);
-    assert.equal((await bridgeClient.listTools()).tools.length, 2);
+    assert.deepEqual((await bridgeClient.listTools()).tools.map(({ name }) => name).sort(), ["get_target", "get_targets", "search_targets"]);
     const discovered = await bridgeClient.callTool({ name: "get_target", arguments: { id: marker + "-mcp" } });
     assert.equal(discovered.isError, undefined);
     assert.equal(JSON.parse(discovered.content[0].text).id, marker + "-mcp");
@@ -406,6 +468,7 @@ try {
   console.log(JSON.stringify({ package: manifest.filename, isolatedProductionInstall: true,
     installedBinary: true, runtimeIdentity: true, onboarding: true, registryComparison: true, targetManagement: true, clientProfiles: true, clientDisconnection: true, configurationRestore: true, configurationBackups: true, batchDiagnostics: true, batchRefresh: true, explicitTargetSelection: true, configImport: true, localClientImport: true,
     hubProfiles: true, importProfileEditing: true, unifiedStatus: true, metadataFreshness: true, registryHistoryUndo: true, guidedSetup: true,
+    explainedSearch: true, savedSearches: true, searchCursor: true, requiredInputPreview: true, shellCompletion: true, connectionPlan: true,
     importProfiles: true, sourceSynchronization: true, importFollowUp: true, stdioMetadata: true, duplicateCleanup: true,
     presets: true, documentation: true, targetDiagnostics: true, localDemo: true, initial, restarted, persistence: true }, null, 2));
 } finally {

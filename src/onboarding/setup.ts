@@ -1,13 +1,39 @@
 import { createInterface } from "node:readline/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { HubClient } from "../client.js";
 import { connectClient, connectionClientSchema } from "./connect.js";
+import { ConfigurationFileError } from "./files.js";
 import { importLocalWorkflow, type ImportWorkflowOptions } from "./import-workflow.js";
 import { prepareLocalImport } from "./local-import.js";
 import { selectImportEntries } from "./import-select.js";
 
+/** Report a safe local write diagnostic without reading arbitrary error messages. */
+function connectionFailureMessage(error: unknown): string {
+  if (error instanceof ConfigurationFileError) {
+    return error.message;
+  }
+  switch ((error as NodeJS.ErrnoException | undefined)?.code) {
+    case "EACCES":
+    case "EPERM":
+    case "EROFS":
+      return "Check the client configuration and directory write permissions.";
+    case "ENOSPC":
+    case "EDQUOT":
+      return "Free disk space for the client configuration and its backup.";
+    case "ENOENT":
+    case "ENOTDIR":
+      return "Check that the client configuration path and its parent directory are available.";
+    default:
+      return "The client configuration could not be saved. Check the destination and retry.";
+  }
+}
+
 /** Guide source selection, registration, and consumer connection through existing guarded workflows. */
 export async function setupConsumer(client: HubClient, hub: string, options: ImportWorkflowOptions & {
   client?: string | undefined; write?: string | undefined; replace?: boolean | undefined; yes?: boolean | undefined;
+  plan?: boolean | undefined; connectionTokenEnv?: string | undefined; config?: string | undefined;
+  hubProfile?: string | undefined; hubProfilesFile?: string | undefined;
 }) {
   // 1. Resolve terminal choices and preflight the connection output before any registry or local writes.
   if (!options.yes && (!process.stdin.isTTY || !process.stderr.isTTY)) {
@@ -20,9 +46,9 @@ export async function setupConsumer(client: HubClient, hub: string, options: Imp
   } finally {
     prompt?.close();
   }
-  const connectionOptions = { client: selectedClient, hub, tokenEnv: options.readTokenEnv ?? options.tokenEnv,
-    write: options.write, replace: options.replace };
-  const connectionPreview = await connectClient({ ...connectionOptions, dryRun: Boolean(options.write) });
+  const connectionOptions = { client: selectedClient, hub, tokenEnv: options.connectionTokenEnv ?? options.readTokenEnv ?? options.tokenEnv,
+    write: options.write ? resolve(options.write) : undefined, replace: options.replace };
+  const connectionPreview = await connectClient({ ...connectionOptions, dryRun: Boolean(options.write), plan: options.plan });
   let select = options.select;
   if (!options.yes && select === undefined) {
     const discovery = await prepareLocalImport({ ...options, hub, fetchA2aCards: false });
@@ -33,7 +59,10 @@ export async function setupConsumer(client: HubClient, hub: string, options: Imp
     refresh: false, diagnose: false, inspectStdio: false });
   if (!preview.ready || !options.apply) {
     return { applied: false, ready: preview.ready, registration: preview, connection: connectionPreview,
-      next: "Review the selection, then repeat setup with --apply. --write FILE explicitly selects a client configuration destination.", executionVerified: false };
+      next: "Review the selection, then run setup with --apply"
+        + (connectionPreview.plan?.requiresReplace ? " and --replace" : "") + "."
+        + (options.plan ? " Omit --plan when applying." : " --write FILE explicitly selects a client configuration destination."),
+      executionVerified: false };
   }
   if (!options.yes) {
     const confirmation = createInterface({ input: process.stdin, output: process.stderr });
@@ -50,16 +79,26 @@ export async function setupConsumer(client: HubClient, hub: string, options: Imp
   // 2. Registration and optional client writes have independent results; never imply a cross-system transaction.
   const registration = await importLocalWorkflow(client, hub, workflow);
   let connection;
-  let connectionFailed = false;
+  let connectionFailure: { message: string; retryCommand?: string[] } | undefined;
   if (registration.applied) {
     try {
       connection = await connectClient(connectionOptions);
-    } catch {
-      connectionFailed = true;
+    } catch (error) {
+      connectionFailure = { message: connectionFailureMessage(error) };
+      if (connectionOptions.write) {
+        connectionFailure.retryCommand = [process.execPath, fileURLToPath(new URL("../../dist/index.js", import.meta.url)),
+          "connect", selectedClient, "--hub", connectionPreview.hub, "--write", connectionOptions.write,
+          ...(connectionOptions.tokenEnv ? ["--token-env", connectionOptions.tokenEnv] : []),
+          ...(options.hubProfile ? ["--hub-profile", options.hubProfile] : []),
+          ...(options.hubProfile && options.hubProfilesFile ? ["--hub-profiles-file", resolve(options.hubProfilesFile)] : []),
+          ...(options.config ? ["--config", options.config] : []), ...(options.replace ? ["--replace"] : [])];
+      }
     }
   }
   return { applied: registration.applied, ready: registration.ready, registration, connection,
-    connectionFailed, failed: registration.failed || connectionFailed,
-    next: connectionFailed ? "Registrations may already be saved. Retry connect for the selected explicit file; do not blindly repeat registration."
-      : "Start/reload the consuming agent to load its settings. Target execution remains unverified.", executionVerified: false };
+    connectionFailed: connectionFailure !== undefined, ...(connectionFailure ? { connectionFailure } : {}),
+    failed: registration.failed || connectionFailure !== undefined,
+    next: connectionFailure ? "Resolve the client configuration issue, then retry connect to finish setup."
+      : registration.applied ? "Start/reload the consuming agent to load its settings. Target execution remains unverified."
+        : "Review the registration report and preview setup again.", executionVerified: false };
 }

@@ -5,7 +5,9 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { test } from "node:test";
 import { parse as parseJsonc } from "jsonc-parser";
+import { parse as parseToml } from "smol-toml";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { prepareConfigImport } from "../dist/onboarding/import-config.js";
 import { mergeConnection } from "../dist/onboarding/connect.js";
@@ -113,7 +115,7 @@ for (const profile of profiles) {
       await transport.close();
     });
     await client.connect(transport);
-    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), ["get_target", "search_targets"]);
+    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), ["get_target", "get_targets", "search_targets"]);
     const first = await client.callTool({ name: "get_target", arguments: { id: "first" } });
     assert.equal(first.isError, undefined);
     assert.equal(JSON.parse(first.content[0].text).id, "first");
@@ -125,6 +127,53 @@ for (const profile of profiles) {
     assert.equal(removed.isError, true);
   });
 }
+
+for (const [profile, layout] of [["codex", "mcp_servers"], ["opencode-v1", "mcp"], ["opencode", "mcp.servers"]]) {
+  test(profile + " versioned HTTP layout authenticates and returns a first summary search through the SDK", async (t) => {
+    const app = await fixture(t, { token: "layout-admin", readToken: "layout-reader" });
+    const hub = await app.listen({ host: "127.0.0.1", port: 0 });
+    assert.equal((await register(app, definition("first"), { authorization: "Bearer layout-admin" })).statusCode, 201);
+    const { stdout } = await cli(["connect", profile, "--hub", hub, "--token-env", "LAYOUT_READER", "--print"]);
+    const config = profile === "codex" ? parseToml(stdout) : parseJsonc(stdout);
+    const entry = layout.split(".").reduce((value, segment) => value[segment], config).agent_tcdh;
+    const bearer = profile === "codex" ? entry.bearer_token_env_var : entry.headers.Authorization.match(/^Bearer \{env:([A-Z_]+)\}$/u)?.[1];
+    assert.equal(bearer, "LAYOUT_READER");
+    assert.equal(entry.url, hub + "/mcp");
+    if (profile !== "codex") {
+      assert.equal(entry.type, "remote");
+      assert.equal(entry.oauth, false);
+    }
+    const settings = { LAYOUT_READER: "layout-reader" };
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url), {
+      requestInit: { headers: { authorization: "Bearer " + settings[bearer] } },
+    });
+    const client = new Client({ name: "http-layout-test", version: "1.0.0" });
+    t.after(() => client.close());
+    await client.connect(transport);
+    assert.deepEqual((await client.listTools()).tools.map(({ name }) => name).sort(), ["get_target", "get_targets", "search_targets"]);
+    const search = await client.callTool({ name: "search_targets", arguments: { tag: "docs", view: "summary" } });
+    assert.equal(search.isError, undefined);
+    assert.deepEqual(JSON.parse(search.content[0].text).items.map(({ id }) => id), ["first"]);
+  });
+}
+
+test("connect previews additions, no-ops, and redacted replacements without changing the file", async (t) => {
+  const path = join(await temporaryDirectory(t), "client.jsonc");
+  const args = ["connect", "opencode", "--hub", "https://hub.example", "--write", path];
+  const preview = async () => JSON.parse((await cli([...args, "--plan"])).stdout);
+  assert.equal((await preview()).plan.action, "add");
+  await assert.rejects(readFile(path), { code: "ENOENT" });
+  await cli(args);
+  assert.equal((await preview()).plan.action, "unchanged");
+  const original = '{"mcp":{"servers":{"agent_tcdh":{"type":"remote","url":"https://previous.example","headers":{"Authorization":"private-previous-value"},"private-setting":"private-setting-value"}}}}';
+  await writeFile(path, original);
+  const report = await preview();
+  assert.equal(report.plan.action, "replace");
+  assert.equal(report.plan.requiresReplace, true);
+  assert.deepEqual(report.plan.differingFields, ["url", "headers", "oauth", "additional-settings"]);
+  assert.doesNotMatch(JSON.stringify(report), /private-|previous\.example/u);
+  assert.equal(await readFile(path, "utf8"), original);
+});
 
 test("anonymous bridge settings ignore inherited administrator credentials and personal setup", async (t) => {
   const app = await fixture(t, { token: "private-hub-admin" });
