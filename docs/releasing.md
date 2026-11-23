@@ -25,7 +25,7 @@ The initial package must be created by an authorized npm account. Download and v
 
 ```sh
 npm login --auth-type=web --browser=false
-npm publish release/agent-tcdh-0.1.6.tgz --access public --ignore-scripts --browser=false
+npm publish ./release/agent-tcdh-0.1.6.tgz --access public --ignore-scripts --browser=false
 ```
 
 If a previous package was entirely unpublished, npm blocks publishing any new version under that name for 24 hours. Previously used package/version pairs cannot be reused. Check the public registry tombstone and [npm unpublish policy](https://docs.npmjs.com/policies/unpublish/) before publication.
